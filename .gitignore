@@ -1,0 +1,19 @@
+# Build output
+target/
+*.class
+
+# Logs
+*.log
+
+# Secrets - contains real Aiven DB credentials, never commit
+src/main/resources/application-local.yml
+
+# IDE
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db

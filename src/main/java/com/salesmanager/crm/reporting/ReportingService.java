@@ -1,0 +1,137 @@
+package com.salesmanager.crm.reporting;
+
+import com.salesmanager.crm.employee.Employee;
+import com.salesmanager.crm.employee.EmployeeRepository;
+import com.salesmanager.crm.lead.LeadOwnerCount;
+import com.salesmanager.crm.lead.LeadRepository;
+import com.salesmanager.crm.lead.LeadStatus;
+import com.salesmanager.crm.lead.LeadStatusCount;
+import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
+import com.salesmanager.crm.reporting.dto.OwnerBreakdown;
+import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
+import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
+import com.salesmanager.crm.visit.VisitRepository;
+import com.salesmanager.crm.visit.VisitStatusCount;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Read-only aggregate queries for the ADMIN-only Phase 5 reporting/dashboard endpoints. Every
+ * query here goes through LeadRepository/VisitRepository/EmployeeRepository's normal
+ * EntityManager, so the Hibernate {@code tenantFilter} that's already active for the current
+ * request (see TenantSessionManager) scopes these aggregates to the current org exactly like
+ * every other read in the codebase - no manual "WHERE organizationId = ..." here either.
+ */
+@Service
+public class ReportingService {
+
+    private final LeadRepository leadRepository;
+    private final VisitRepository visitRepository;
+    private final EmployeeRepository employeeRepository;
+
+    public ReportingService(LeadRepository leadRepository, VisitRepository visitRepository,
+                             EmployeeRepository employeeRepository) {
+        this.leadRepository = leadRepository;
+        this.visitRepository = visitRepository;
+        this.employeeRepository = employeeRepository;
+    }
+
+    /**
+     * byStatus always contains every LeadStatus value (pre-seeded to zero below, then
+     * overwritten for statuses that actually have leads) so the frontend gets a consistent set
+     * of categories to render regardless of which ones happen to be empty in this org.
+     */
+    @Transactional(readOnly = true)
+    public PipelineSummaryResponse pipelineSummary() {
+        Map<LeadStatus, Long> byStatus = new EnumMap<>(LeadStatus.class);
+        for (LeadStatus status : LeadStatus.values()) {
+            byStatus.put(status, 0L);
+        }
+        long totalLeads = 0;
+        for (LeadStatusCount row : leadRepository.countGroupedByStatus()) {
+            byStatus.put(row.getStatus(), row.getCount());
+            totalLeads += row.getCount();
+        }
+
+        List<LeadOwnerCount> ownerCounts = leadRepository.countGroupedByOwner();
+        Set<UUID> ownerIds = ownerCounts.stream().map(LeadOwnerCount::getOwnerId).collect(Collectors.toSet());
+        Map<UUID, String> ownerNamesById = employeeRepository.findAllById(ownerIds).stream()
+                .collect(Collectors.toMap(Employee::getId, Employee::getFullName));
+
+        List<OwnerBreakdown> byOwner = ownerCounts.stream()
+                .map(row -> new OwnerBreakdown(
+                        row.getOwnerId(),
+                        ownerNamesById.getOrDefault(row.getOwnerId(), "Unknown"),
+                        row.getLeadCount(),
+                        row.getClosedWonCount()))
+                .toList();
+
+        return new PipelineSummaryResponse(byStatus, totalLeads, byOwner);
+    }
+
+    /**
+     * Reuses the same status-count aggregate as pipelineSummary() rather than a raw SQL
+     * division, so the totalLeads==0 case and the 2-decimal rounding are both explicit,
+     * ordinary Java rather than baked into a query.
+     */
+    @Transactional(readOnly = true)
+    public ConversionRateResponse conversionRate() {
+        long totalLeads = 0;
+        long closedWonCount = 0;
+        long lostCount = 0;
+        for (LeadStatusCount row : leadRepository.countGroupedByStatus()) {
+            totalLeads += row.getCount();
+            if (row.getStatus() == LeadStatus.CLOSED_WON) {
+                closedWonCount = row.getCount();
+            } else if (row.getStatus() == LeadStatus.LOST) {
+                lostCount = row.getCount();
+            }
+        }
+
+        double conversionRatePercent = totalLeads == 0
+                ? 0.0
+                : roundToTwoDecimals(closedWonCount * 100.0 / totalLeads);
+
+        return new ConversionRateResponse(totalLeads, closedWonCount, lostCount, conversionRatePercent);
+    }
+
+    /**
+     * dateFrom/dateTo are both optional and independently nullable (VisitRepository's query
+     * handles a null bound as "no restriction on that side"). completionRatePercent's
+     * denominator is completed+missed only - PLANNED visits are excluded since they haven't
+     * resolved to either outcome yet.
+     */
+    @Transactional(readOnly = true)
+    public VisitsCompletedVsMissedResponse visitsCompletedVsMissed(LocalDate dateFrom, LocalDate dateTo) {
+        long completed = 0;
+        long missed = 0;
+        long planned = 0;
+        for (VisitStatusCount row : visitRepository.countGroupedByStatus(dateFrom, dateTo)) {
+            switch (row.getStatus()) {
+                case COMPLETED -> completed = row.getCount();
+                case MISSED -> missed = row.getCount();
+                case PLANNED -> planned = row.getCount();
+            }
+        }
+
+        long resolved = completed + missed;
+        double completionRatePercent = resolved == 0
+                ? 0.0
+                : roundToTwoDecimals(completed * 100.0 / resolved);
+
+        return new VisitsCompletedVsMissedResponse(completed, missed, planned, completionRatePercent);
+    }
+
+    private static double roundToTwoDecimals(double value) {
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+}
