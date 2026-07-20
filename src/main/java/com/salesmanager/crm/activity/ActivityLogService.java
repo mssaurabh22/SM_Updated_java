@@ -1,8 +1,11 @@
 package com.salesmanager.crm.activity;
 
+import com.salesmanager.crm.employee.EmployeeHierarchyService;
 import com.salesmanager.crm.employee.Role;
 import com.salesmanager.crm.security.CurrentUser;
 import com.salesmanager.crm.security.UserPrincipal;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,10 +28,13 @@ public class ActivityLogService {
 
     private final ActivityLogRepository activityLogRepository;
     private final CurrentUser currentUser;
+    private final EmployeeHierarchyService employeeHierarchyService;
 
-    public ActivityLogService(ActivityLogRepository activityLogRepository, CurrentUser currentUser) {
+    public ActivityLogService(ActivityLogRepository activityLogRepository, CurrentUser currentUser,
+                               EmployeeHierarchyService employeeHierarchyService) {
         this.activityLogRepository = activityLogRepository;
         this.currentUser = currentUser;
+        this.employeeHierarchyService = employeeHierarchyService;
     }
 
     // saveAndFlush - see EmployeeService#create's comment re: @CreationTimestamp/@UpdateTimestamp.
@@ -47,21 +53,39 @@ public class ActivityLogService {
     }
 
     /**
-     * Same EMPLOYEE-forced-to-own-leads visibility rule as LeadService#list/
-     * VisitService#list: an EMPLOYEE's ownerId filter is silently forced to their own id
-     * regardless of what was requested (so they can never see a colleague's leads' activity
-     * via query manipulation, even across multiple leads they don't own); ADMIN gets
-     * whatever ownerId filter (or none) was requested, honored as-is, org-wide.
+     * Same EMPLOYEE-forced-to-own-leads visibility rule as LeadService#list/VisitService#list,
+     * including the same TEAM_VISIBILITY expansion: an EMPLOYEE's ownerId filter is silently
+     * forced to their own id regardless of what was requested (so they can never see a
+     * colleague's leads' activity via query manipulation), UNLESS TEAM_VISIBILITY is entitled
+     * and they have subordinates, in which case their scope is themself + every subordinate at
+     * any depth (an out-of-scope ownerId filter is ignored the same way LeadService#list
+     * ignores one). ADMIN gets whatever ownerId filter (or none) was requested, honored as-is,
+     * org-wide.
      */
     @Transactional(readOnly = true)
     public Page<ActivityLog> list(ActivityFilter filter, Pageable pageable) {
         UserPrincipal principal = currentUser.get();
-        UUID ownerId = principal.getRole() == Role.EMPLOYEE ? principal.getEmployeeId() : filter.ownerId();
-
         Specification<ActivityLog> spec = Specification
                 .where(ActivityLogSpecifications.hasLeadId(filter.leadId()))
-                .and(ActivityLogSpecifications.hasOwnerId(ownerId))
                 .and(ActivityLogSpecifications.hasType(filter.type()));
+
+        if (principal.getRole() == Role.EMPLOYEE) {
+            Set<UUID> subordinateIds = employeeHierarchyService
+                    .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId());
+            if (subordinateIds.isEmpty()) {
+                spec = spec.and(ActivityLogSpecifications.hasOwnerId(principal.getEmployeeId()));
+            } else {
+                Set<UUID> teamScope = new HashSet<>(subordinateIds);
+                teamScope.add(principal.getEmployeeId());
+                if (filter.ownerId() != null && teamScope.contains(filter.ownerId())) {
+                    spec = spec.and(ActivityLogSpecifications.hasOwnerId(filter.ownerId()));
+                } else {
+                    spec = spec.and(ActivityLogSpecifications.hasOwnerIdIn(teamScope));
+                }
+            }
+        } else {
+            spec = spec.and(ActivityLogSpecifications.hasOwnerId(filter.ownerId()));
+        }
 
         return activityLogRepository.findAll(spec, pageable);
     }

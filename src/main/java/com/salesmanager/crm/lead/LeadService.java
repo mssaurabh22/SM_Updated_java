@@ -8,6 +8,7 @@ import com.salesmanager.crm.common.NotFoundException;
 import com.salesmanager.crm.common.event.FollowUpScheduledEvent;
 import com.salesmanager.crm.common.event.LeadCreatedEvent;
 import com.salesmanager.crm.employee.Employee;
+import com.salesmanager.crm.employee.EmployeeHierarchyService;
 import com.salesmanager.crm.employee.EmployeeRepository;
 import com.salesmanager.crm.employee.Role;
 import com.salesmanager.crm.lead.dto.LeadCreateRequest;
@@ -55,6 +56,7 @@ public class LeadService {
     private final MasterDataService masterDataService;
     private final MasterDataRepository masterDataRepository;
     private final EmployeeRepository employeeRepository;
+    private final EmployeeHierarchyService employeeHierarchyService;
     private final NotificationService notificationService;
     private final ActivityLogService activityLogService;
     private final CurrentUser currentUser;
@@ -65,6 +67,7 @@ public class LeadService {
                         MasterDataService masterDataService,
                         MasterDataRepository masterDataRepository,
                         EmployeeRepository employeeRepository,
+                        EmployeeHierarchyService employeeHierarchyService,
                         NotificationService notificationService,
                         ActivityLogService activityLogService,
                         CurrentUser currentUser,
@@ -74,6 +77,7 @@ public class LeadService {
         this.masterDataService = masterDataService;
         this.masterDataRepository = masterDataRepository;
         this.employeeRepository = employeeRepository;
+        this.employeeHierarchyService = employeeHierarchyService;
         this.notificationService = notificationService;
         this.activityLogService = activityLogService;
         this.currentUser = currentUser;
@@ -337,28 +341,48 @@ public class LeadService {
     @Transactional(readOnly = true)
     public Page<Lead> list(LeadFilter filter, Pageable pageable) {
         UserPrincipal principal = currentUser.get();
-        // EMPLOYEE visibility rule: silently force the ownerId filter to their own id
-        // regardless of what was requested, so an employee can never list a colleague's
-        // leads via query manipulation. ADMIN gets whatever ownerId filter (or none) was
-        // requested, honored as-is.
-        UUID ownerId = principal.getRole() == Role.EMPLOYEE ? principal.getEmployeeId() : filter.ownerId();
-
         Specification<Lead> spec = Specification
                 .where(LeadSpecifications.hasStatus(filter.status()))
-                .and(LeadSpecifications.hasOwner(ownerId))
                 .and(LeadSpecifications.hasInterestLevel(filter.interestLevelId()));
+
+        if (principal.getRole() == Role.EMPLOYEE) {
+            // TEAM_VISIBILITY (see EmployeeHierarchyService#getTeamVisibilityScope): empty
+            // when the org hasn't licensed it or this employee has no reports, in which case
+            // this is exactly the old rule - force the ownerId filter to their own id
+            // regardless of what was requested, so an employee can never list a colleague's
+            // leads via query manipulation.
+            Set<UUID> subordinateIds = employeeHierarchyService
+                    .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId());
+            if (subordinateIds.isEmpty()) {
+                spec = spec.and(LeadSpecifications.hasOwner(principal.getEmployeeId()));
+            } else {
+                Set<UUID> teamScope = new HashSet<>(subordinateIds);
+                teamScope.add(principal.getEmployeeId());
+                // An explicitly requested ownerId is honored only if it falls within the
+                // manager's own team scope - never used to peek at leads outside it.
+                if (filter.ownerId() != null && teamScope.contains(filter.ownerId())) {
+                    spec = spec.and(LeadSpecifications.hasOwner(filter.ownerId()));
+                } else {
+                    spec = spec.and(LeadSpecifications.hasOwnerIn(teamScope));
+                }
+            }
+        } else {
+            // ADMIN gets whatever ownerId filter (or none) was requested, honored as-is.
+            spec = spec.and(LeadSpecifications.hasOwner(filter.ownerId()));
+        }
 
         return leadRepository.findAll(spec, pageable);
     }
 
     /**
      * ADMIN can fetch any lead in their org; EMPLOYEE gets a NotFoundException (never a 403)
-     * for a colleague's lead - same information-hiding principle already established for
+     * for a colleague's lead unless TEAM_VISIBILITY is entitled and the lead's owner is in
+     * their subordinate chain - same information-hiding principle already established for
      * cross-tenant reads elsewhere, so "not yours" is indistinguishable from "doesn't exist".
      */
     @Transactional(readOnly = true, noRollbackFor = NotFoundException.class)
     public Lead getById(UUID id) {
-        return loadForCurrentUser(id);
+        return loadForCurrentUser(id, true);
     }
 
     @Transactional(readOnly = true)
@@ -367,11 +391,27 @@ public class LeadService {
     }
 
     private Lead loadForCurrentUser(UUID id) {
+        return loadForCurrentUser(id, false);
+    }
+
+    /**
+     * @param allowTeamVisibility only true for read paths (getById) - TEAM_VISIBILITY is a
+     *                            READ-only grant, not an edit right, so update()/updateStatus()
+     *                            always pass false and a manager still can't modify a
+     *                            subordinate's lead through this feature alone (reassign() is
+     *                            ADMIN-only regardless, see its own comment).
+     */
+    private Lead loadForCurrentUser(UUID id, boolean allowTeamVisibility) {
         Lead lead = leadRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Lead not found: " + id));
         UserPrincipal principal = currentUser.get();
         if (principal.getRole() == Role.EMPLOYEE && !lead.getOwnerId().equals(principal.getEmployeeId())) {
-            throw new NotFoundException("Lead not found: " + id);
+            boolean withinTeamScope = allowTeamVisibility && employeeHierarchyService
+                    .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId())
+                    .contains(lead.getOwnerId());
+            if (!withinTeamScope) {
+                throw new NotFoundException("Lead not found: " + id);
+            }
         }
         return lead;
     }

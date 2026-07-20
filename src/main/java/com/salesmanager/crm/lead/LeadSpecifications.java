@@ -1,5 +1,6 @@
 package com.salesmanager.crm.lead;
 
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -22,6 +23,11 @@ final class LeadSpecifications {
 
     static Specification<Lead> hasOwner(UUID ownerId) {
         return (root, query, cb) -> ownerId == null ? null : cb.equal(root.get("ownerId"), ownerId);
+    }
+
+    /** Team-visibility scoping (FeatureEntitlement.TEAM_VISIBILITY) - owner in a manager's scope. */
+    static Specification<Lead> hasOwnerIn(Set<UUID> ownerIds) {
+        return (root, query, cb) -> ownerIds == null ? null : root.get("ownerId").in(ownerIds);
     }
 
     static Specification<Lead> hasInterestLevel(UUID interestLevelId) {

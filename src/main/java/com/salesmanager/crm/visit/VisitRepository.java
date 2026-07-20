@@ -2,6 +2,7 @@ package com.salesmanager.crm.visit;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -64,4 +65,19 @@ public interface VisitRepository extends JpaRepository<Visit, UUID>, JpaSpecific
             + "AND v.visitDate <= COALESCE(:dateTo, v.visitDate) "
             + "GROUP BY v.status")
     List<VisitStatusCount> countGroupedByStatus(@Param("dateFrom") LocalDate dateFrom, @Param("dateTo") LocalDate dateTo);
+
+    /**
+     * Team-visibility (FeatureEntitlement.TEAM_VISIBILITY) counterpart to
+     * {@link #countGroupedByStatus(LocalDate, LocalDate)} - restricted to visits under a given
+     * set of lead ids (the caller resolves those via LeadRepository#findByOwnerIdIn against a
+     * manager's scope) rather than every visit in the org. Same COALESCE-bound rationale as the
+     * unscoped query above.
+     */
+    @Query("SELECT v.status AS status, COUNT(v) AS count FROM Visit v "
+            + "WHERE v.leadId IN :leadIds "
+            + "AND v.visitDate >= COALESCE(:dateFrom, v.visitDate) "
+            + "AND v.visitDate <= COALESCE(:dateTo, v.visitDate) "
+            + "GROUP BY v.status")
+    List<VisitStatusCount> countGroupedByStatusForLeadIds(@Param("leadIds") Set<UUID> leadIds,
+            @Param("dateFrom") LocalDate dateFrom, @Param("dateTo") LocalDate dateTo);
 }

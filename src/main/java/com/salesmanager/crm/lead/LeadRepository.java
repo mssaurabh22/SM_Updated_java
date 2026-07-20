@@ -1,10 +1,12 @@
 package com.salesmanager.crm.lead;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 /**
  * Deliberately relies on the Hibernate {@code tenantFilter} (and Postgres RLS as
@@ -30,6 +32,13 @@ public interface LeadRepository extends JpaRepository<Lead, UUID>, JpaSpecificat
     List<Lead> findByOwnerId(UUID ownerId);
 
     /**
+     * Team-visibility (FeatureEntitlement.TEAM_VISIBILITY) counterpart to {@link #findByOwnerId} -
+     * backs VisitService#list and ReportingService#visitsCompletedVsMissed's scoped variant when
+     * a manager's visible owners are themself + every subordinate, not just a single id.
+     */
+    List<Lead> findByOwnerIdIn(Set<UUID> ownerIds);
+
+    /**
      * Backs ReportingService#pipelineSummary/#conversionRate - a single GROUP BY query
      * (rather than one count() call per LeadStatus) so the whole byStatus breakdown is one
      * round trip. Statuses with zero leads simply produce no row here; ReportingService fills
@@ -50,4 +59,14 @@ public interface LeadRepository extends JpaRepository<Lead, UUID>, JpaSpecificat
             + "SUM(CASE WHEN l.status = com.salesmanager.crm.lead.LeadStatus.CLOSED_WON THEN 1L ELSE 0L END) AS closedWonCount "
             + "FROM Lead l GROUP BY l.ownerId")
     List<LeadOwnerCount> countGroupedByOwner();
+
+    /**
+     * Team-visibility (FeatureEntitlement.TEAM_VISIBILITY) counterpart to
+     * {@link #countGroupedByStatus()} - restricts the same status breakdown to a manager's
+     * scope (themself + every subordinate) instead of the whole org, for ReportingService's
+     * manager-scoped pipeline-summary/conversion-rate variants.
+     */
+    @Query("SELECT l.status AS status, COUNT(l) AS count FROM Lead l "
+            + "WHERE l.ownerId IN :ownerIds GROUP BY l.status")
+    List<LeadStatusCount> countGroupedByStatusForOwners(@Param("ownerIds") Set<UUID> ownerIds);
 }

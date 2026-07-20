@@ -4,6 +4,7 @@ import com.salesmanager.crm.activity.ActivityLogService;
 import com.salesmanager.crm.activity.ActivityType;
 import com.salesmanager.crm.common.NotFoundException;
 import com.salesmanager.crm.common.event.FollowUpScheduledEvent;
+import com.salesmanager.crm.employee.EmployeeHierarchyService;
 import com.salesmanager.crm.employee.Role;
 import com.salesmanager.crm.lead.Lead;
 import com.salesmanager.crm.lead.LeadRepository;
@@ -45,19 +46,22 @@ public class VisitService {
     private final ActivityLogService activityLogService;
     private final CurrentUser currentUser;
     private final ApplicationEventPublisher eventPublisher;
+    private final EmployeeHierarchyService employeeHierarchyService;
 
     public VisitService(VisitRepository visitRepository,
                          LeadRepository leadRepository,
                          MasterDataService masterDataService,
                          ActivityLogService activityLogService,
                          CurrentUser currentUser,
-                         ApplicationEventPublisher eventPublisher) {
+                         ApplicationEventPublisher eventPublisher,
+                         EmployeeHierarchyService employeeHierarchyService) {
         this.visitRepository = visitRepository;
         this.leadRepository = leadRepository;
         this.masterDataService = masterDataService;
         this.activityLogService = activityLogService;
         this.currentUser = currentUser;
         this.eventPublisher = eventPublisher;
+        this.employeeHierarchyService = employeeHierarchyService;
     }
 
     @Transactional(noRollbackFor = {NotFoundException.class, InvalidReferenceException.class})
@@ -253,12 +257,23 @@ public class VisitService {
                 .and(VisitSpecifications.visitDateFrom(filter.dateFrom()))
                 .and(VisitSpecifications.visitDateTo(filter.dateTo()));
 
-        // EMPLOYEE visibility rule: an EMPLOYEE sees visits only for leads they own,
-        // regardless of who created the visit record itself - same shape as LeadService#list's
-        // ownerId forcing, but scoped through the PARENT lead's owner since Visit itself has
-        // no ownerId of its own.
+        // EMPLOYEE visibility rule: an EMPLOYEE sees visits only for leads owned within their
+        // visible scope, regardless of who created the visit record itself - same shape as
+        // LeadService#list's ownerId forcing, but scoped through the PARENT lead's owner since
+        // Visit itself has no ownerId of its own. TEAM_VISIBILITY (see
+        // EmployeeHierarchyService#getTeamVisibilityScope) expands that scope from "just their
+        // own leads" to "themself + every subordinate's leads, at any depth".
         if (principal.getRole() == Role.EMPLOYEE) {
-            Set<UUID> ownedLeadIds = leadRepository.findByOwnerId(principal.getEmployeeId()).stream()
+            Set<UUID> subordinateIds = employeeHierarchyService
+                    .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId());
+            Set<UUID> visibleOwnerIds;
+            if (subordinateIds.isEmpty()) {
+                visibleOwnerIds = Set.of(principal.getEmployeeId());
+            } else {
+                visibleOwnerIds = new HashSet<>(subordinateIds);
+                visibleOwnerIds.add(principal.getEmployeeId());
+            }
+            Set<UUID> ownedLeadIds = leadRepository.findByOwnerIdIn(visibleOwnerIds).stream()
                     .map(Lead::getId)
                     .collect(Collectors.toSet());
             spec = spec.and(VisitSpecifications.hasLeadIdIn(ownedLeadIds));
@@ -269,12 +284,13 @@ public class VisitService {
 
     /**
      * ADMIN can fetch any visit in their org; EMPLOYEE gets a NotFoundException (never a
-     * 403) for a visit under a colleague's lead - same information-hiding principle as
+     * 403) for a visit under a colleague's lead unless TEAM_VISIBILITY is entitled and that
+     * lead's owner is in their subordinate chain - same information-hiding principle as
      * LeadService#getById.
      */
     @Transactional(readOnly = true, noRollbackFor = NotFoundException.class)
     public Visit getById(UUID id) {
-        return loadForCurrentUser(id);
+        return loadForCurrentUser(id, true);
     }
 
     /**
@@ -339,13 +355,27 @@ public class VisitService {
      * requested.
      */
     private Visit loadForCurrentUser(UUID id) {
+        return loadForCurrentUser(id, false);
+    }
+
+    /**
+     * @param allowTeamVisibility only true for read paths (getById) - TEAM_VISIBILITY is a
+     *                            READ-only grant, not an edit right, same rule and rationale as
+     *                            LeadService#loadForCurrentUser's overload.
+     */
+    private Visit loadForCurrentUser(UUID id, boolean allowTeamVisibility) {
         Visit visit = visitRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Visit not found: " + id));
         Lead lead = leadRepository.findById(visit.getLeadId())
                 .orElseThrow(() -> new NotFoundException("Visit not found: " + id));
         UserPrincipal principal = currentUser.get();
         if (principal.getRole() == Role.EMPLOYEE && !lead.getOwnerId().equals(principal.getEmployeeId())) {
-            throw new NotFoundException("Visit not found: " + id);
+            boolean withinTeamScope = allowTeamVisibility && employeeHierarchyService
+                    .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId())
+                    .contains(lead.getOwnerId());
+            if (!withinTeamScope) {
+                throw new NotFoundException("Visit not found: " + id);
+            }
         }
         return visit;
     }

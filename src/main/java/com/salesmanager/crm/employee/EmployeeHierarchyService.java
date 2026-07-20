@@ -1,5 +1,7 @@
 package com.salesmanager.crm.employee;
 
+import com.salesmanager.crm.entitlement.EntitlementService;
+import com.salesmanager.crm.entitlement.FeatureEntitlement;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -20,9 +22,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class EmployeeHierarchyService {
 
     private final EmployeeRepository employeeRepository;
+    private final EntitlementService entitlementService;
 
-    public EmployeeHierarchyService(EmployeeRepository employeeRepository) {
+    public EmployeeHierarchyService(EmployeeRepository employeeRepository,
+                                     EntitlementService entitlementService) {
         this.employeeRepository = employeeRepository;
+        this.entitlementService = entitlementService;
     }
 
     /**
@@ -50,6 +55,24 @@ public class EmployeeHierarchyService {
             return employeeRepository.findByActive(true).stream()
                     .map(Employee::getId)
                     .collect(Collectors.toSet());
+        }
+        return getAllSubordinateIds(viewerId);
+    }
+
+    /**
+     * Team-visibility scope for Lead/Visit/Report queries (the TEAM_VISIBILITY entitlement) -
+     * distinct from {@link #getVisibleEmployeeScope}, which is unconditional and only feeds the
+     * already entitlement-gated Leave/HR endpoints. Here the underlying Lead/Visit/Report
+     * endpoints are always reachable; the entitlement only decides whether a manager's *result
+     * set* expands beyond their own records. Returns empty both when the org hasn't licensed
+     * TEAM_VISIBILITY and when the viewer simply has no reports - callers that need to tell
+     * those apart don't need to today (both mean "fall back to self-only"), but this keeps the
+     * entitlement check and the hierarchy lookup in one place rather than duplicated per caller.
+     */
+    @Transactional(readOnly = true)
+    public Set<UUID> getTeamVisibilityScope(UUID organizationId, UUID viewerId) {
+        if (!entitlementService.isEntitled(organizationId, FeatureEntitlement.TEAM_VISIBILITY)) {
+            return Set.of();
         }
         return getAllSubordinateIds(viewerId);
     }
