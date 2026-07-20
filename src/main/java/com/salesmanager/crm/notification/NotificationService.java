@@ -46,6 +46,20 @@ public class NotificationService {
         return notificationRepository.findByRecipientId(recipientId, pageable);
     }
 
+    /** Backs the bell badge - the TRUE total unread count, not just what happens to be on
+     * whatever page the bell dropdown last fetched. */
+    @Transactional(readOnly = true)
+    public long countUnreadForCurrentUser() {
+        return notificationRepository.countByRecipientIdAndRead(currentUser.get().getEmployeeId(), false);
+    }
+
+    /** No-op (not an error) if there's nothing unread - same "empty state, not a bug" idiom
+     * used elsewhere in this codebase. */
+    @Transactional
+    public void markAllReadForCurrentUser() {
+        notificationRepository.markAllReadForRecipient(currentUser.get().getEmployeeId());
+    }
+
     @Transactional(noRollbackFor = NotFoundException.class)
     public Notification markRead(UUID id) {
         Notification notification = notificationRepository.findById(id)

@@ -1,6 +1,7 @@
 package com.salesmanager.crm.notification;
 
 import com.salesmanager.crm.notification.dto.NotificationResponse;
+import com.salesmanager.crm.notification.dto.UnreadCountResponse;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -34,5 +35,15 @@ public class NotificationController {
     @PatchMapping("/{id}/read")
     public NotificationResponse markRead(@PathVariable UUID id) {
         return NotificationResponse.from(notificationService.markRead(id));
+    }
+
+    @GetMapping("/unread-count")
+    public UnreadCountResponse unreadCount() {
+        return new UnreadCountResponse(notificationService.countUnreadForCurrentUser());
+    }
+
+    @PatchMapping("/read-all")
+    public void markAllRead() {
+        notificationService.markAllReadForCurrentUser();
     }
 }
