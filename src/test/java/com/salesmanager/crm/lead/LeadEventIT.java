@@ -148,6 +148,44 @@ class LeadEventIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void nextFollowupDate_onUpdate_whenVisitAlreadyExistsForThatDate_doesNotCreateDuplicateVisit() {
+        AuthResponse admin = registerOrganization("Lead Event Followup Dup Org");
+        Masters masters = loadMasters(admin.accessToken());
+        LocalDate followUpDate = LocalDate.now().plusDays(4);
+
+        Map<String, Object> body = minimalLeadBody(masters, "Followup Dup Co", "Contact FD", "9666666608");
+        // Isolate the duplicate-prevention behavior under test from the unrelated
+        // logAsVisitToday auto-visit (which now defaults to true).
+        body.put("logAsVisitToday", false);
+        ResponseEntity<String> created = post("/leads", admin.accessToken(), body);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String leadId = parse(created.getBody()).get("id").asText();
+
+        // Manually create a Visit already dated followUpDate - the "already something
+        // scheduled/done that day" case LeadVisitEventListener's duplicate-prevention guard
+        // must respect.
+        Map<String, Object> visitBody = new HashMap<>();
+        visitBody.put("leadId", leadId);
+        visitBody.put("visitDate", followUpDate.toString());
+        visitBody.put("visitType", "FIELD");
+        ResponseEntity<String> visitCreated = post("/visits", admin.accessToken(), visitBody);
+        assertThat(visitCreated.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        JsonNode visitsBeforeUpdate = getVisitsForLead(admin.accessToken(), leadId);
+        assertThat(visitsBeforeUpdate.size()).isEqualTo(1);
+
+        // Setting nextFollowupDate to the SAME date as the manually-created Visit fires
+        // FollowUpScheduledEvent - LeadVisitEventListener must detect the existing Visit for
+        // this lead+date and skip creating a duplicate stub, not double-book the lead.
+        ResponseEntity<String> update = put("/leads/" + leadId, admin.accessToken(),
+                Map.of("nextFollowupDate", followUpDate.toString()));
+        assertThat(update.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        JsonNode visitsAfterUpdate = getVisitsForLead(admin.accessToken(), leadId);
+        assertThat(visitsAfterUpdate.size()).isEqualTo(1);
+    }
+
+    @Test
     void visitNextVisitDate_onCreate_createsStubFollowUpCarryingOverPurposeId() {
         AuthResponse admin = registerOrganization("Lead Event Visit NextVisit Create Org");
         Masters masters = loadMasters(admin.accessToken());

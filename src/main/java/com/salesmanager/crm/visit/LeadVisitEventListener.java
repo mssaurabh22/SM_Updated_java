@@ -59,8 +59,10 @@ public class LeadVisitEventListener {
 
     /**
      * logAsVisitToday=true: the touchpoint that led to creating this Lead is logged as a
-     * completed Visit dated today (FIELD is a reasonable default type). logAsVisitToday=false
-     * (or omitted): no-op.
+     * completed Visit dated today, typed per {@code event.visitType()} (the rep's own choice
+     * on the Lead form - a phone call vs. an in-person visit - defaulting to FIELD only when
+     * omitted, for backward compatibility with any caller that doesn't send it).
+     * logAsVisitToday=false (or omitted): no-op.
      */
     // REQUIRES_NEW (not the default REQUIRED) is mandatory here, not stylistic: Spring
     // explicitly rejects a plain @Transactional on an AFTER_COMMIT @TransactionalEventListener
@@ -81,10 +83,11 @@ public class LeadVisitEventListener {
                 // fired, so it should always exist.
                 return;
             }
+            VisitType visitType = event.visitType() != null ? VisitType.valueOf(event.visitType()) : VisitType.FIELD;
             Visit visit = Visit.builder()
                     .leadId(event.leadId())
                     .visitDate(LocalDate.now())
-                    .visitType(VisitType.FIELD)
+                    .visitType(visitType)
                     .status(VisitStatus.COMPLETED)
                     .createdBy(lead.getOwnerId())
                     .build();
@@ -105,7 +108,10 @@ public class LeadVisitEventListener {
     /**
      * Creates a MINIMAL stub follow-up Visit - never a clone of the triggering Lead's/
      * Visit's other fields (no remarks/objections/budget carried over, since those belong to
-     * the actual future interaction, which hasn't happened yet).
+     * the actual future interaction, which hasn't happened yet). No-ops entirely (no Visit
+     * insert, no activity log entry) if a Visit already exists for this lead+date - see the
+     * {@code existsByLeadIdAndVisitDate} check below for the full duplicate-prevention
+     * rationale.
      */
     // REQUIRES_NEW (not the default REQUIRED) is mandatory here, not stylistic: Spring
     // explicitly rejects a plain @Transactional on an AFTER_COMMIT @TransactionalEventListener
@@ -117,6 +123,19 @@ public class LeadVisitEventListener {
     public void onFollowUpScheduled(FollowUpScheduledEvent event) {
         try {
             tenantSessionManager.activateTenant(event.organizationId());
+            // Duplicate-prevention guard: this listener fires on EVERY FollowUpScheduledEvent
+            // (a Lead's own nextFollowupDate change, or a Visit's own nextVisitDate change),
+            // with no relationship to whether a Visit already happens to exist for this exact
+            // lead+date - e.g. a rep's new follow-up date coincides with a Visit already
+            // manually scheduled, or an earlier auto-stub from a previous update. Any existing
+            // Visit for this lead+date (PLANNED or COMPLETED - both mean "already something
+            // scheduled/done that day") makes a new stub redundant, so skip creating it
+            // entirely. This is a silent skip, not an error: the auto-stub is a
+            // system-generated convenience creation, not a user-facing action, so there is
+            // nothing new to log and nothing to surface to anyone.
+            if (visitRepository.existsByLeadIdAndVisitDate(event.leadId(), event.followUpDate())) {
+                return;
+            }
             Lead lead = leadRepository.findById(event.leadId()).orElse(null);
             if (lead == null) {
                 return;

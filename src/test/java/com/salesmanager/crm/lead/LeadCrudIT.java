@@ -10,6 +10,7 @@ import com.salesmanager.crm.auth.dto.LoginRequest;
 import com.salesmanager.crm.auth.dto.RegisterOrganizationRequest;
 import com.salesmanager.crm.employee.Role;
 import com.salesmanager.crm.masterdata.MasterType;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -107,6 +108,48 @@ class LeadCrudIT extends AbstractIntegrationTest {
 
         ResponseEntity<String> response = post("/leads", admin.accessToken(), body);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void create_pastNextFollowupDate_returnsBadRequest_todayAndFutureSucceed() {
+        AuthResponse admin = registerOrganization("Lead Past Followup Org");
+        Masters masters = loadMasters(admin.accessToken());
+
+        Map<String, Object> pastBody = minimalLeadBody(masters, "Past Followup Co", "Contact PF", "9777777780");
+        pastBody.put("nextFollowupDate", LocalDate.now().minusDays(1).toString());
+        ResponseEntity<String> pastResponse = post("/leads", admin.accessToken(), pastBody);
+        assertThat(pastResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        Map<String, Object> todayBody = minimalLeadBody(masters, "Today Followup Co", "Contact TF", "9777777781");
+        todayBody.put("nextFollowupDate", LocalDate.now().toString());
+        ResponseEntity<String> todayResponse = post("/leads", admin.accessToken(), todayBody);
+        assertThat(todayResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        Map<String, Object> futureBody = minimalLeadBody(masters, "Future Followup Co", "Contact FF", "9777777782");
+        futureBody.put("nextFollowupDate", LocalDate.now().plusDays(3).toString());
+        ResponseEntity<String> futureResponse = post("/leads", admin.accessToken(), futureBody);
+        assertThat(futureResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    }
+
+    @Test
+    void create_pastExpectedCloseDate_returnsBadRequest_todayAndFutureSucceed() {
+        AuthResponse admin = registerOrganization("Lead Past ExpectedClose Org");
+        Masters masters = loadMasters(admin.accessToken());
+
+        Map<String, Object> pastBody = minimalLeadBody(masters, "Past Close Co", "Contact PC", "9777777783");
+        pastBody.put("expectedCloseDate", LocalDate.now().minusDays(1).toString());
+        ResponseEntity<String> pastResponse = post("/leads", admin.accessToken(), pastBody);
+        assertThat(pastResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        Map<String, Object> todayBody = minimalLeadBody(masters, "Today Close Co", "Contact TC", "9777777784");
+        todayBody.put("expectedCloseDate", LocalDate.now().toString());
+        ResponseEntity<String> todayResponse = post("/leads", admin.accessToken(), todayBody);
+        assertThat(todayResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        Map<String, Object> futureBody = minimalLeadBody(masters, "Future Close Co", "Contact FC", "9777777785");
+        futureBody.put("expectedCloseDate", LocalDate.now().plusDays(30).toString());
+        ResponseEntity<String> futureResponse = post("/leads", admin.accessToken(), futureBody);
+        assertThat(futureResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     }
 
     @Test

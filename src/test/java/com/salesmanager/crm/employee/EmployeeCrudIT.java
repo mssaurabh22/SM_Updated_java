@@ -38,7 +38,7 @@ class EmployeeCrudIT extends AbstractIntegrationTest {
         Map<String, Object> createBody = Map.of(
                 "fullName", "New Hire",
                 "email", "newhire-" + UUID.randomUUID() + "@lifecycle.test",
-                "phone", "555-1234",
+                "phone", "9812345670",
                 "password", "supersecret1",
                 "role", Role.EMPLOYEE.name(),
                 "designationId", designationId,
@@ -61,12 +61,12 @@ class EmployeeCrudIT extends AbstractIntegrationTest {
         assertThat(toStringList(fetchedBody.get("assignedProductIds"))).containsExactlyInAnyOrderElementsOf(productIds);
         assertThat(fetchedBody.get("active").asBoolean()).isTrue();
 
-        Map<String, Object> updateBody = Map.of("fullName", "New Hire Updated", "phone", "555-9999");
+        Map<String, Object> updateBody = Map.of("fullName", "New Hire Updated", "phone", "9812345671");
         ResponseEntity<String> updated = put("/employees/" + employeeId, admin.accessToken(), updateBody);
         assertThat(updated.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode updatedBody = parse(updated.getBody());
         assertThat(updatedBody.get("fullName").asText()).isEqualTo("New Hire Updated");
-        assertThat(updatedBody.get("phone").asText()).isEqualTo("555-9999");
+        assertThat(updatedBody.get("phone").asText()).isEqualTo("9812345671");
         // Untouched fields must remain as they were.
         assertThat(updatedBody.get("designationId").asText()).isEqualTo(designationId);
 
@@ -91,6 +91,30 @@ class EmployeeCrudIT extends AbstractIntegrationTest {
 
         ResponseEntity<String> response = post("/employees", admin.accessToken(), createBody);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void create_withBadPhoneFormat_isRejectedWithBadRequest_andValid10DigitPhoneSucceeds() {
+        AuthResponse admin = registerOrganization("Employee Phone Format Org");
+
+        Map<String, Object> badPhoneBody = Map.of(
+                "fullName", "Bad Phone Employee",
+                "email", "badphone-" + UUID.randomUUID() + "@lifecycle.test",
+                "phone", "12345",
+                "password", "supersecret1",
+                "role", Role.EMPLOYEE.name());
+        ResponseEntity<String> badPhoneResponse = post("/employees", admin.accessToken(), badPhoneBody);
+        assertThat(badPhoneResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        Map<String, Object> validPhoneBody = Map.of(
+                "fullName", "Good Phone Employee",
+                "email", "goodphone-" + UUID.randomUUID() + "@lifecycle.test",
+                "phone", "9812345699",
+                "password", "supersecret1",
+                "role", Role.EMPLOYEE.name());
+        ResponseEntity<String> validPhoneResponse = post("/employees", admin.accessToken(), validPhoneBody);
+        assertThat(validPhoneResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(parse(validPhoneResponse.getBody()).get("phone").asText()).isEqualTo("9812345699");
     }
 
     @Test

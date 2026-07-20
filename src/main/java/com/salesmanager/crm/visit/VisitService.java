@@ -299,6 +299,21 @@ public class VisitService {
                 .toList();
     }
 
+    /**
+     * Non-blocking same-day-visit advisory check (GET /visits/same-day) - read-only, reuses
+     * the exact same owner-scoped visibility rule as create()'s loadLeadForCurrentUser (an
+     * EMPLOYEE can only check dates for leads they own; a colleague's lead reports "Lead not
+     * found", not 403 - same info-hiding principle as every other ownership check in this
+     * service). Purely advisory: this does NOT block or alter VisitService#create's own
+     * behavior in any way - a caller uses this result to decide whether to show a warning
+     * before still calling the normal create endpoint regardless of choice.
+     */
+    @Transactional(readOnly = true, noRollbackFor = NotFoundException.class)
+    public List<Visit> checkSameDay(UUID leadId, LocalDate visitDate) {
+        loadLeadForCurrentUser(leadId);
+        return visitRepository.findByLeadIdAndVisitDate(leadId, visitDate);
+    }
+
     private void rejectClientSuppliedMissed(VisitStatus status) {
         if (status == VisitStatus.MISSED) {
             throw new InvalidReferenceException("status",

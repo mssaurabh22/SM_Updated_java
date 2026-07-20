@@ -11,6 +11,11 @@ import java.util.UUID;
  * {@code logAsVisitToday} mirrors the request flag of the same name on
  * {@code LeadCreateRequest}: when true, the touchpoint that led to creating this Lead is
  * itself logged as a completed Visit dated today (see {@code visit.LeadVisitEventListener}).
+ *
+ * {@code visitType} is the raw "FIELD"/"TELEPHONIC" string from {@code LeadCreateRequest}
+ * (nullable - defaults to "FIELD" on the listening side), only meaningful when
+ * {@code logAsVisitToday} is true - kept as a plain String here (not {@code visit.VisitType})
+ * for the same package-direction reason as this record's own placement.
  */
-public record LeadCreatedEvent(UUID leadId, UUID organizationId, boolean logAsVisitToday) {
+public record LeadCreatedEvent(UUID leadId, UUID organizationId, boolean logAsVisitToday, String visitType) {
 }

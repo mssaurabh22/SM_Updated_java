@@ -88,7 +88,7 @@ public record VisitCreateRequest(
 
         String remarks,
 
-        @NotPastDate
+        @NotPastDate(message = "nextVisitDate must not be in the past")
         LocalDate nextVisitDate,
 
         VisitStatus status) {

@@ -30,6 +30,13 @@ spring:
     # entire request/response cycle, including lazy loading in views/serialization.
     # Revisit in a later phase if we move to explicit service-layer DTO projection.
     open-in-view: true
+  servlet:
+    # Spring Boot's defaults (1MB max file size, 10MB max request size) are too small for a
+    # realistic multi-hundred-row historical-client .xlsx export via the Lead import endpoint
+    # (leadimport.LeadImportController) - bump both to 10MB.
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
   flyway:
     enabled: true
     locations: classpath:db/migration

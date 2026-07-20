@@ -146,7 +146,8 @@ public class LeadService {
         // of the spec - which silently disabled the auto-visit for every real caller that just
         // omits the field rather than sending `true` explicitly.
         boolean logAsVisitToday = request.logAsVisitToday() == null || request.logAsVisitToday();
-        eventPublisher.publishEvent(new LeadCreatedEvent(saved.getId(), saved.getOrganizationId(), logAsVisitToday));
+        eventPublisher.publishEvent(
+                new LeadCreatedEvent(saved.getId(), saved.getOrganizationId(), logAsVisitToday, request.visitType()));
         if (request.nextFollowupDate() != null) {
             eventPublisher.publishEvent(new FollowUpScheduledEvent(
                     saved.getId(), saved.getOrganizationId(), request.nextFollowupDate(), null));

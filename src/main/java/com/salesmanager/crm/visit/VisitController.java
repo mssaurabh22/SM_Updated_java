@@ -2,6 +2,7 @@ package com.salesmanager.crm.visit;
 
 import com.salesmanager.crm.visit.dto.VisitCreateRequest;
 import com.salesmanager.crm.visit.dto.VisitResponse;
+import com.salesmanager.crm.visit.dto.VisitSameDayMatch;
 import com.salesmanager.crm.visit.dto.VisitStatusUpdateRequest;
 import com.salesmanager.crm.visit.dto.VisitUpdateRequest;
 import jakarta.validation.Valid;
@@ -56,6 +57,17 @@ public class VisitController {
     @GetMapping("/today")
     public List<VisitResponse> today() {
         return visitService.getTodaysFollowUps().stream().map(VisitResponse::from).toList();
+    }
+
+    // Must be declared (or otherwise resolved) ahead of GET /{id} in Spring MVC's route
+    // matching for the literal "/same-day" segment to win over the {id} path variable - see
+    // LeadController's identical comment re: "/duplicates" (and this controller's own
+    // "/today" above). Purely advisory (warn, don't block) - see VisitService#checkSameDay's
+    // javadoc; does not change VisitService#create's own behavior at all.
+    @GetMapping("/same-day")
+    public List<VisitSameDayMatch> sameDay(@RequestParam UUID leadId,
+                                            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate visitDate) {
+        return visitService.checkSameDay(leadId, visitDate).stream().map(VisitSameDayMatch::from).toList();
     }
 
     @GetMapping("/{id}")

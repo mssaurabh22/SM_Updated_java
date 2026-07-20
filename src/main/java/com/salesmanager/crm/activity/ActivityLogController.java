@@ -36,7 +36,7 @@ public class ActivityLogController {
     public Page<ActivityResponse> list(@RequestParam(required = false) UUID leadId,
                                         @RequestParam(required = false) UUID ownerId,
                                         @RequestParam(required = false) ActivityType type,
-                                        @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+                                        @PageableDefault(sort = {"createdAt", "id"}, direction = Sort.Direction.DESC) Pageable pageable) {
         ActivityFilter filter = new ActivityFilter(leadId, ownerId, type);
         return activityLogService.list(filter, pageable).map(ActivityResponse::from);
     }

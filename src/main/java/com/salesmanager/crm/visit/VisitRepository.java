@@ -26,6 +26,23 @@ public interface VisitRepository extends JpaRepository<Visit, UUID>, JpaSpecific
     List<Visit> findByVisitDateLessThanEqualAndStatus(LocalDate date, VisitStatus status, Sort sort);
 
     /**
+     * Backs LeadVisitEventListener#onFollowUpScheduled's duplicate-stub-Visit guard - true if
+     * ANY Visit (regardless of status; PLANNED or COMPLETED both count as "already something
+     * scheduled/done that day") already exists for this lead on this date, so the auto-stub
+     * creation there can no-op instead of double-booking the lead.
+     */
+    boolean existsByLeadIdAndVisitDate(UUID leadId, LocalDate visitDate);
+
+    /**
+     * Backs VisitService#checkSameDay - the non-blocking same-day-visit advisory check (GET
+     * /visits/same-day). Returns every Visit (any status) already on the books for this
+     * lead+date, for the caller to surface as a "heads up, this lead already has a visit that
+     * day" warning before submitting a new one - purely advisory, nothing here blocks or
+     * changes VisitService#create's own behavior.
+     */
+    List<Visit> findByLeadIdAndVisitDate(UUID leadId, LocalDate visitDate);
+
+    /**
      * Backs ReportingService#visitsCompletedVsMissed - one GROUP BY query for the whole
      * COMPLETED/MISSED/PLANNED breakdown, optionally restricted to an inclusive visitDate
      * range. Either bound may be null (covers "all visits" on that side of the range) - each

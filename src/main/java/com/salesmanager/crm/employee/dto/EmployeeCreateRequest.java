@@ -4,6 +4,7 @@ import com.salesmanager.crm.employee.Role;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.util.Set;
 import java.util.UUID;
@@ -16,6 +17,7 @@ public record EmployeeCreateRequest(
         @Email(message = "email must be a valid email address")
         String email,
 
+        @Pattern(regexp = "^\\d{10}$", message = "phone must be exactly 10 digits")
         String phone,
 
         @NotBlank(message = "password is required")

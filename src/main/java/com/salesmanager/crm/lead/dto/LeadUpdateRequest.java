@@ -1,5 +1,6 @@
 package com.salesmanager.crm.lead.dto;
 
+import com.salesmanager.crm.common.validation.NotPastDate;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
@@ -85,8 +86,10 @@ public record LeadUpdateRequest(
 
         String remarks,
 
+        @NotPastDate(message = "nextFollowupDate must not be in the past")
         LocalDate nextFollowupDate,
 
+        @NotPastDate(message = "expectedCloseDate must not be in the past")
         LocalDate expectedCloseDate,
 
         Set<UUID> productIds,

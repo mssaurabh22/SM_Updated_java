@@ -31,7 +31,7 @@ public class EmployeeActivityLogController {
     @RequireEntitlement(FeatureEntitlement.EMPLOYEE_LEAVE_MANAGEMENT)
     public Page<EmployeeActivityResponse> list(@RequestParam(required = false) UUID employeeId,
                                                 @RequestParam(required = false) EmployeeActivityType type,
-                                                @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+                                                @PageableDefault(sort = {"createdAt", "id"}, direction = Sort.Direction.DESC) Pageable pageable) {
         return employeeActivityLogService.list(employeeId, type, pageable).map(EmployeeActivityResponse::from);
     }
 }

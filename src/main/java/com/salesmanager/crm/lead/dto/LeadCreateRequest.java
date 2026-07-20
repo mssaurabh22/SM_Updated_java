@@ -1,5 +1,6 @@
 package com.salesmanager.crm.lead.dto;
 
+import com.salesmanager.crm.common.validation.NotPastDate;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -96,8 +97,10 @@ public record LeadCreateRequest(
 
         String remarks,
 
+        @NotPastDate(message = "nextFollowupDate must not be in the past")
         LocalDate nextFollowupDate,
 
+        @NotPastDate(message = "expectedCloseDate must not be in the past")
         LocalDate expectedCloseDate,
 
         Set<UUID> productIds,
@@ -105,5 +108,17 @@ public record LeadCreateRequest(
         @Size(max = 2000, message = "productsOther must be at most 2000 characters")
         String productsOther,
 
-        Boolean logAsVisitToday) {
+        Boolean logAsVisitToday,
+
+        /**
+         * Only meaningful when {@code logAsVisitToday=true} - which kind of touchpoint the
+         * auto-created stub Visit represents (a phone call vs. an in-person visit). Kept as a
+         * plain validated String rather than importing {@code visit.VisitType} here: the
+         * {@code lead} package deliberately has no dependency on {@code visit} (see
+         * {@code LeadCreatedEvent}'s class javadoc) - {@code visit.LeadVisitEventListener},
+         * which already owns VisitType, converts this value itself. Defaults to "FIELD" when
+         * omitted, matching this flag's pre-existing default behavior.
+         */
+        @Pattern(regexp = "FIELD|TELEPHONIC", message = "visitType must be FIELD or TELEPHONIC")
+        String visitType) {
 }

@@ -11,7 +11,10 @@ import java.lang.annotation.Target;
  * Validates that a {@link java.time.LocalDate} field is either {@code null} (optional fields
  * stay optional - use alongside {@code @NotNull} to also require presence) or today-or-future.
  * Applied to Visit's {@code visitDate}/{@code nextVisitDate} fields, matching the spec's
- * literal "VisitDate >= Today" rule.
+ * literal "VisitDate >= Today" rule, and equally to Lead's {@code nextFollowupDate}/
+ * {@code expectedCloseDate} fields - same today-or-future semantics for any "the next thing
+ * to do" date field, not a Visit-specific assumption. Each usage overrides {@code message()}
+ * with field-specific wording.
  */
 @Target({ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER, ElementType.ANNOTATION_TYPE})
 @Retention(RetentionPolicy.RUNTIME)

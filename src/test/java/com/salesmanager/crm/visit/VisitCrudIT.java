@@ -73,6 +73,28 @@ class VisitCrudIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void create_pastNextVisitDate_returnsBadRequest_todayAndFutureSucceed() {
+        AuthResponse admin = registerOrganization("Visit Past NextVisit Org");
+        Masters masters = loadMasters(admin.accessToken());
+        String leadId = createLead(admin.accessToken(), masters, "Past NextVisit Co", "Contact PN", "9888888885");
+
+        Map<String, Object> pastBody = minimalVisitBody(leadId, LocalDate.now());
+        pastBody.put("nextVisitDate", LocalDate.now().minusDays(1).toString());
+        ResponseEntity<String> pastResponse = post("/visits", admin.accessToken(), pastBody);
+        assertThat(pastResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        Map<String, Object> todayBody = minimalVisitBody(leadId, LocalDate.now());
+        todayBody.put("nextVisitDate", LocalDate.now().toString());
+        ResponseEntity<String> todayResponse = post("/visits", admin.accessToken(), todayBody);
+        assertThat(todayResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        Map<String, Object> futureBody = minimalVisitBody(leadId, LocalDate.now());
+        futureBody.put("nextVisitDate", LocalDate.now().plusDays(2).toString());
+        ResponseEntity<String> futureResponse = post("/visits", admin.accessToken(), futureBody);
+        assertThat(futureResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    }
+
+    @Test
     void create_clientSuppliedMissedStatus_returnsBadRequest() {
         AuthResponse admin = registerOrganization("Visit Missed Create Org");
         Masters masters = loadMasters(admin.accessToken());
@@ -258,6 +280,43 @@ class VisitCrudIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    @Test
+    void sameDay_returnsExistingVisitForLeadAndDate_andEmptyListWhenNone() {
+        AuthResponse admin = registerOrganization("Visit SameDay Org");
+        Masters masters = loadMasters(admin.accessToken());
+        String leadId = createLead(admin.accessToken(), masters, "SameDay Co", "Contact SD", "9888888886");
+        // A future date (not today) so the manually-created Visit below is the ONLY one on
+        // the books for that date - createLead's Lead creation itself auto-schedules a
+        // separate COMPLETED Visit dated TODAY (logAsVisitToday defaults to true), which would
+        // otherwise collide with a same-day check dated today.
+        LocalDate visitDate = LocalDate.now().plusDays(2);
+        String visitId = createVisit(admin.accessToken(), minimalVisitBody(leadId, visitDate));
+
+        JsonNode matches = getSameDay(admin.accessToken(), leadId, visitDate);
+        assertThat(matches.size()).isEqualTo(1);
+        JsonNode match = matches.get(0);
+        assertThat(match.get("id").asText()).isEqualTo(visitId);
+        assertThat(match.get("visitDate").asText()).isEqualTo(visitDate.toString());
+        assertThat(match.get("status").asText()).isEqualTo("PLANNED");
+        assertThat(match.get("visitType").asText()).isEqualTo("FIELD");
+
+        JsonNode noMatches = getSameDay(admin.accessToken(), leadId, visitDate.plusDays(1));
+        assertThat(noMatches.size()).isEqualTo(0);
+    }
+
+    @Test
+    void sameDay_crossTenantLeadId_returnsNotFound() {
+        AuthResponse orgA = registerOrganization("Visit SameDay Org A");
+        AuthResponse orgB = registerOrganization("Visit SameDay Org B");
+        Masters orgBMasters = loadMasters(orgB.accessToken());
+        String orgBLeadId = createLead(orgB.accessToken(), orgBMasters, "SameDay Org B Co", "Contact SDB",
+                "9888888887");
+
+        ResponseEntity<String> response = get(
+                "/visits/same-day?leadId=" + orgBLeadId + "&visitDate=" + LocalDate.now(), orgA.accessToken());
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
     // ---- helpers ----
 
     private record Masters(String cityId, String leadSourceId, String industryId) {
@@ -351,6 +410,12 @@ class VisitCrudIT extends AbstractIntegrationTest {
 
     private JsonNode getVisitsList(String token) {
         ResponseEntity<String> response = get("/visits", token);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return parse(response.getBody());
+    }
+
+    private JsonNode getSameDay(String token, String leadId, LocalDate visitDate) {
+        ResponseEntity<String> response = get("/visits/same-day?leadId=" + leadId + "&visitDate=" + visitDate, token);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         return parse(response.getBody());
     }
