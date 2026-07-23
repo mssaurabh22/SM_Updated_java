@@ -155,6 +155,16 @@ public class VisitService {
             }
         }
 
+        // Rescheduling a MISSED visit (a new date and/or time) puts it back on the calendar -
+        // flip it back to PLANNED so it reappears in "due today"/upcoming views instead of
+        // staying permanently excluded from them. COMPLETED is deliberately left untouched
+        // here - it's a terminal state set only via updateStatus(); correcting an incidental
+        // date/time detail on an already-completed visit shouldn't silently un-complete it.
+        boolean isReschedule = request.visitDate() != null || request.scheduledTime() != null;
+        if (isReschedule && visit.getStatus() == VisitStatus.MISSED) {
+            visit.setStatus(VisitStatus.PLANNED);
+        }
+
         if (request.visitDate() != null) {
             visit.setVisitDate(request.visitDate());
         }

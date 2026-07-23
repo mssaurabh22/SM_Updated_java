@@ -10,17 +10,22 @@ import com.salesmanager.crm.auth.dto.LoginRequest;
 import com.salesmanager.crm.auth.dto.RegisterOrganizationRequest;
 import com.salesmanager.crm.employee.Role;
 import com.salesmanager.crm.masterdata.MasterType;
+import com.salesmanager.crm.security.TenantSessionManager;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Phase 3: Visits CRUD - required-field/past-date validation, ownership-via-parent-lead
@@ -31,6 +36,63 @@ import org.springframework.http.ResponseEntity;
 class VisitCrudIT extends AbstractIntegrationTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Autowired
+    private VisitRepository visitRepository;
+
+    @Autowired
+    private TenantSessionManager tenantSessionManager;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Test
+    void update_reschedulingAMissedVisit_flipsStatusBackToPlanned() {
+        AuthResponse admin = registerOrganization("Visit Reschedule Org");
+        Masters masters = loadMasters(admin.accessToken());
+        String leadId = createLead(admin.accessToken(), masters, "Reschedule Co", "Contact R", "9222222221");
+        String visitId = createVisit(admin.accessToken(), minimalVisitBody(leadId, LocalDate.now()));
+
+        markVisitMissed(admin.orgId(), visitId);
+        JsonNode beforeReschedule = parse(get("/visits/" + visitId, admin.accessToken()).getBody());
+        assertThat(beforeReschedule.get("status").asText()).isEqualTo("MISSED");
+
+        // Rescheduling (a new date/time) puts it back on the calendar - status should flip
+        // back to PLANNED, not stay stuck as MISSED forever.
+        Map<String, Object> reschedule = new HashMap<>();
+        reschedule.put("visitDate", LocalDate.now().plusDays(2).toString());
+        reschedule.put("scheduledTime", LocalTime.of(18, 0).toString());
+        ResponseEntity<String> updateResponse = put("/visits/" + visitId, admin.accessToken(), reschedule);
+        assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode updated = parse(updateResponse.getBody());
+        assertThat(updated.get("status").asText()).isEqualTo("PLANNED");
+        assertThat(updated.get("visitDate").asText()).isEqualTo(LocalDate.now().plusDays(2).toString());
+
+        // A plain field edit with no date/time change leaves an already-PLANNED visit alone
+        // (sanity check that this doesn't somehow force MISSED->PLANNED unconditionally).
+        ResponseEntity<String> plainEdit = put("/visits/" + visitId, admin.accessToken(),
+                Map.of("remarks", "Just a note"));
+        assertThat(parse(plainEdit.getBody()).get("status").asText()).isEqualTo("PLANNED");
+    }
+
+    @Test
+    void update_editingACompletedVisitsDate_doesNotUnCompleteIt() {
+        AuthResponse admin = registerOrganization("Visit Completed Edit Org");
+        Masters masters = loadMasters(admin.accessToken());
+        String leadId = createLead(admin.accessToken(), masters, "Completed Edit Co", "Contact C", "9222222222");
+        String visitId = createVisit(admin.accessToken(), minimalVisitBody(leadId, LocalDate.now()));
+
+        ResponseEntity<String> completeResponse = patch("/visits/" + visitId + "/status", admin.accessToken(),
+                Map.of("status", "COMPLETED"));
+        assertThat(completeResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // Correcting the recorded date on an already-COMPLETED visit must not silently flip
+        // it back to PLANNED - COMPLETED is a deliberate terminal state.
+        ResponseEntity<String> dateFix = put("/visits/" + visitId, admin.accessToken(),
+                Map.of("visitDate", LocalDate.now().toString()));
+        assertThat(dateFix.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(parse(dateFix.getBody()).get("status").asText()).isEqualTo("COMPLETED");
+    }
 
     @Test
     void create_withOnlyRequiredFields_succeeds() {
@@ -386,6 +448,25 @@ class VisitCrudIT extends AbstractIntegrationTest {
         ResponseEntity<String> response = post("/visits", token, body);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return parse(response.getBody()).get("id").asText();
+    }
+
+    /**
+     * Directly flips a Visit to MISSED via VisitRepository, bypassing VisitService's
+     * client-supplied-MISSED rejection - same approach as ReportingIT#markVisitMissed, needed
+     * here since the ordinary API can never produce a MISSED visit to test rescheduling against.
+     */
+    private void markVisitMissed(UUID orgId, String visitId) {
+        TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        txTemplate.executeWithoutResult(status -> {
+            tenantSessionManager.activateTenant(orgId);
+            try {
+                Visit visit = visitRepository.findById(UUID.fromString(visitId)).orElseThrow();
+                visit.setStatus(VisitStatus.MISSED);
+                visitRepository.saveAndFlush(visit);
+            } finally {
+                tenantSessionManager.clearTenant();
+            }
+        });
     }
 
     private String firstMasterId(String token, MasterType type) {
