@@ -20,5 +20,13 @@ public enum FeatureEntitlement {
      * programmatically via EntitlementService#isEntitled, not through the @RequireEntitlement
      * aspect.
      */
-    TEAM_VISIBILITY
+    TEAM_VISIBILITY,
+
+    /**
+     * Bundles the Product catalog/stock module AND Invoicing as ONE licensed feature (the
+     * user's explicit choice - Invoicing is "instead of independent" of Inventory, not a
+     * separately gated add-on). Gates every endpoint in the {@code inventory} and
+     * {@code invoicing} packages via {@link RequireEntitlement}.
+     */
+    INVENTORY_MANAGEMENT
 }

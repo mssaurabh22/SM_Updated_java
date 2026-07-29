@@ -30,5 +30,13 @@ public enum NotificationType {
     LEAD_LAPSED_DIGEST,
     LEAVE_REQUEST_SUBMITTED,
     LEAVE_REQUEST_APPROVED,
-    LEAVE_REQUEST_REJECTED
+    LEAVE_REQUEST_REJECTED,
+
+    /**
+     * Inventory module: fired to every ADMIN in the org the first time a Product's
+     * stock_quantity crosses at-or-below its low_stock_threshold (not re-fired on every
+     * subsequent invoice/adjustment while it stays low - see ProductService for the
+     * crossing-detection logic).
+     */
+    LOW_STOCK
 }

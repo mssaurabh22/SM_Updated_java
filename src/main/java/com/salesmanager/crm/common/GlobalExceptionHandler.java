@@ -3,6 +3,10 @@ package com.salesmanager.crm.common;
 import com.salesmanager.crm.attendance.AlreadyClockedInException;
 import com.salesmanager.crm.attendance.InvalidAttendanceStateException;
 import com.salesmanager.crm.entitlement.FeatureNotEntitledException;
+import com.salesmanager.crm.inventory.InsufficientStockException;
+import com.salesmanager.crm.inventory.InvalidStockAdjustmentException;
+import com.salesmanager.crm.invoicing.InvalidInvoiceLineItemException;
+import com.salesmanager.crm.invoicing.InvalidLogoException;
 import com.salesmanager.crm.leadimport.UnsupportedImportFileException;
 import com.salesmanager.crm.leave.DuplicateHolidayException;
 import com.salesmanager.crm.leave.DuplicateLeaveTypeException;
@@ -189,6 +193,72 @@ public class GlobalExceptionHandler {
                         .build()))
                 .build();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidStockAdjustmentException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidStockAdjustment(InvalidStockAdjustmentException ex,
+                                                                        HttpServletRequest request) {
+        ErrorResponse body = ErrorResponse.builder()
+                .timestamp(OffsetDateTime.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+                .message("Validation failed")
+                .path(request.getRequestURI())
+                .fieldErrors(List.of(ErrorResponse.FieldErrorDetail.builder()
+                        .field(ex.getField())
+                        .message(ex.getMessage())
+                        .build()))
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidInvoiceLineItemException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidInvoiceLineItem(InvalidInvoiceLineItemException ex,
+                                                                        HttpServletRequest request) {
+        ErrorResponse body = ErrorResponse.builder()
+                .timestamp(OffsetDateTime.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+                .message("Validation failed")
+                .path(request.getRequestURI())
+                .fieldErrors(List.of(ErrorResponse.FieldErrorDetail.builder()
+                        .field(ex.getField())
+                        .message(ex.getMessage())
+                        .build()))
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidLogoException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidLogo(InvalidLogoException ex, HttpServletRequest request) {
+        ErrorResponse body = ErrorResponse.builder()
+                .timestamp(OffsetDateTime.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+                .message("Validation failed")
+                .path(request.getRequestURI())
+                .fieldErrors(List.of(ErrorResponse.FieldErrorDetail.builder()
+                        .field(ex.getField())
+                        .message(ex.getMessage())
+                        .build()))
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    // Same rationale/status as InsufficientLeaveBalanceException - a business-state conflict
+    // ("not enough stock right now"), not a malformed payload.
+    @ExceptionHandler(InsufficientStockException.class)
+    public ResponseEntity<ErrorResponse> handleInsufficientStock(InsufficientStockException ex,
+                                                                    HttpServletRequest request) {
+        ErrorResponse body = ErrorResponse.builder()
+                .timestamp(OffsetDateTime.now())
+                .status(HttpStatus.CONFLICT.value())
+                .error(HttpStatus.CONFLICT.getReasonPhrase())
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .fieldErrors(List.of())
+                .build();
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(UnsupportedImportFileException.class)

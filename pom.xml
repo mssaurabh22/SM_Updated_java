@@ -22,6 +22,7 @@
         <jjwt.version>0.12.5</jjwt.version>
         <testcontainers.version>1.19.7</testcontainers.version>
         <poi.version>5.2.5</poi.version>
+        <openhtmltopdf.version>1.0.10</openhtmltopdf.version>
     </properties>
 
     <dependencies>
@@ -118,6 +119,16 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
+        </dependency>
+
+        <!-- HTML+CSS -> PDF rendering for generated invoices (invoicing.InvoicePdfService).
+             Apache-2.0 licensed. Chosen over hand-coding raw PDFBox/OpenPDF coordinate-based
+             drawing - a tabular invoice layout (line items, right-aligned money columns,
+             totals footer) is far simpler to express as a <table> + CSS than to hand-place. -->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>${openhtmltopdf.version}</version>
         </dependency>
 
         <!-- Test -->

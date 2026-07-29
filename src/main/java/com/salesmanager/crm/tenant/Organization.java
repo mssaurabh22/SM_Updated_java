@@ -40,4 +40,43 @@ public class Organization extends BaseEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "theme_settings", columnDefinition = "jsonb")
     private String themeSettings;
+
+    /**
+     * The seller header shown on a generated invoice PDF (invoicing.InvoicePdfHtmlBuilder) -
+     * all optional plain text, no format validation ("lightweight" v1, no GST-compliance
+     * rigor). Added directly to Organization rather than a separate one-row-per-org profile
+     * table, matching the same precedent as {@code themeSettings} above: singular,
+     * one-per-org, admin-editable config lives directly here.
+     */
+    @Column(name = "billing_address", length = 500)
+    private String billingAddress;
+
+    @Column(name = "billing_gstin", length = 20)
+    private String billingGstin;
+
+    @Column(name = "billing_phone", length = 50)
+    private String billingPhone;
+
+    /**
+     * Optional logo shown at the top of a generated invoice PDF - stored directly as bytea
+     * (not S3; see V14 migration comment) since it's a small, rarely-changed, single-row-per-org
+     * asset and this codebase has no file-upload infrastructure yet. logoContentType is always
+     * set together with logoImage (image/png or image/jpeg only, validated in
+     * BillingProfileService) so the GET /organizations/me/logo endpoint can set the right
+     * Content-Type without re-sniffing the bytes.
+     */
+    @Column(name = "logo_image")
+    private byte[] logoImage;
+
+    @Column(name = "logo_content_type", length = 50)
+    private String logoContentType;
+
+    /** Optional free text shown near the seller header / at the bottom of the invoice PDF -
+     * e.g. a tagline, bank details, or terms & conditions. Plain text, HTML-escaped by
+     * InvoicePdfHtmlBuilder like every other user-supplied field. */
+    @Column(name = "invoice_header_text", length = 1000)
+    private String invoiceHeaderText;
+
+    @Column(name = "invoice_footer_text", length = 1000)
+    private String invoiceFooterText;
 }
