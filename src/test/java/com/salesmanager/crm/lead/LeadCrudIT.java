@@ -52,6 +52,28 @@ class LeadCrudIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void list_searchMatchesCompanyContactPhoneAndEmail_caseInsensitive() {
+        AuthResponse admin = registerOrganization("Lead Search Org");
+        Masters masters = loadMasters(admin.accessToken());
+
+        Map<String, Object> body = minimalLeadBody(masters, "Acme Rockets Inc", "Jane Buyer", "9876543210");
+        body.put("email", "jane.buyer@acme.test");
+        ResponseEntity<String> created = post("/leads", admin.accessToken(), body);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String leadId = parse(created.getBody()).get("id").asText();
+
+        // Unrelated lead that should never surface for any of the searches below.
+        post("/leads", admin.accessToken(),
+                minimalLeadBody(masters, "Zenith Traders", "Sam Seller", "9111111111"));
+
+        assertThat(searchLeadIds(admin.accessToken(), "acme rockets")).containsExactly(leadId);
+        assertThat(searchLeadIds(admin.accessToken(), "JANE")).containsExactly(leadId);
+        assertThat(searchLeadIds(admin.accessToken(), "9876543210")).containsExactly(leadId);
+        assertThat(searchLeadIds(admin.accessToken(), "acme.test")).containsExactly(leadId);
+        assertThat(searchLeadIds(admin.accessToken(), "no-such-term-anywhere")).isEmpty();
+    }
+
+    @Test
     void create_missingRequiredField_returnsBadRequest() {
         AuthResponse admin = registerOrganization("Lead Missing Field Org");
         Masters masters = loadMasters(admin.accessToken());
@@ -433,6 +455,18 @@ class LeadCrudIT extends AbstractIntegrationTest {
         ResponseEntity<String> response = get("/masters/" + type, token);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         return parse(response.getBody());
+    }
+
+    private java.util.List<String> searchLeadIds(String token, String term) {
+        String encoded = java.net.URLEncoder.encode(term, java.nio.charset.StandardCharsets.UTF_8);
+        ResponseEntity<String> response = get("/leads?search=" + encoded, token);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode content = parse(response.getBody()).get("content");
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (JsonNode node : content) {
+            ids.add(node.get("id").asText());
+        }
+        return ids;
     }
 
     private Masters loadMasters(String adminToken) {

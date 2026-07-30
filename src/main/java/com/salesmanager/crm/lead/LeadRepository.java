@@ -69,4 +69,21 @@ public interface LeadRepository extends JpaRepository<Lead, UUID>, JpaSpecificat
     @Query("SELECT l.status AS status, COUNT(l) AS count FROM Lead l "
             + "WHERE l.ownerId IN :ownerIds GROUP BY l.status")
     List<LeadStatusCount> countGroupedByStatusForOwners(@Param("ownerIds") Set<UUID> ownerIds);
+
+    /**
+     * Backs ReportingService#leadsBySource (Dashboard's "Leads by Source" chart) - same
+     * GROUP BY-in-one-round-trip shape as {@link #countGroupedByStatus()}. leadSourceId is
+     * nullable, and Lead's own javadoc already establishes it's a raw id into master_data, not
+     * a JPA relation - so this returns raw ids/counts only; ReportingService resolves ids to
+     * labels (and buckets the null-id row as "Other") since a label lookup needs
+     * MasterDataRepository, not this one.
+     */
+    @Query("SELECT l.leadSourceId AS leadSourceId, COUNT(l) AS count FROM Lead l GROUP BY l.leadSourceId")
+    List<LeadSourceCount> countGroupedByLeadSource();
+
+    /** Team-visibility counterpart to {@link #countGroupedByLeadSource()}, same shape as
+     * {@link #countGroupedByStatusForOwners(Set)}. */
+    @Query("SELECT l.leadSourceId AS leadSourceId, COUNT(l) AS count FROM Lead l "
+            + "WHERE l.ownerId IN :ownerIds GROUP BY l.leadSourceId")
+    List<LeadSourceCount> countGroupedByLeadSourceForOwners(@Param("ownerIds") Set<UUID> ownerIds);
 }

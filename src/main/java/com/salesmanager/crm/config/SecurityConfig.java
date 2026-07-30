@@ -47,7 +47,13 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(allowedOrigins.split(",")));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        // X-Platform-Key is the Platform Console's own auth header (InternalOrganizationController/
+        // InternalEntitlementController) - without it explicitly allowed here, a real browser's CORS
+        // preflight rejects it before the request is ever sent, surfacing as a bare "Network Error"
+        // with no response at all. Every other client in this app (the normal tenant frontend, and
+        // every curl/script call used for local testing) only ever sends Authorization, which is why
+        // this gap went unnoticed until the Platform Console was actually exercised from a browser.
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Platform-Key"));
         config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

@@ -45,8 +45,9 @@ public class LeadController {
     public Page<LeadResponse> list(@RequestParam(required = false) LeadStatus status,
                                     @RequestParam(required = false) UUID ownerId,
                                     @RequestParam(required = false) UUID interestLevelId,
+                                    @RequestParam(required = false) String search,
                                     Pageable pageable) {
-        LeadFilter filter = new LeadFilter(status, ownerId, interestLevelId);
+        LeadFilter filter = new LeadFilter(status, ownerId, interestLevelId, search);
         return leadService.list(filter, pageable).map(LeadResponse::from);
     }
 

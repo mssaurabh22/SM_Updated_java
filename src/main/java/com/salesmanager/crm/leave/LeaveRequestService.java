@@ -23,6 +23,7 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -343,14 +344,26 @@ public class LeaveRequestService {
         return BigDecimal.valueOf(count);
     }
 
-    /** Small hand-built JSON payload for LEAVE_REQUEST_* notifications - same style as LeadService#buildReassignmentPayload. */
+    /** Small hand-built JSON payload for LEAVE_REQUEST_* notifications - same style as
+     * LeadService#buildReassignmentPayload. employeeName/leaveTypeName are denormalized here
+     * (resolved once, at write time) rather than left as bare ids for the frontend to look up -
+     * same "denormalize at write time, trust it" discipline as activity_log, so the
+     * notification's own message can show "Priya Sharma requested Casual Leave (22-23 Jul)"
+     * without a second round-trip. Both are best-effort (omitted if the referenced
+     * employee/leave type has since been deleted) since neither is essential to the
+     * notification's core identity (leaveRequestId/dates). */
     private String buildPayload(LeaveRequest leaveRequest) {
         try {
-            return objectMapper.writeValueAsString(Map.of(
-                    "leaveRequestId", leaveRequest.getId().toString(),
-                    "leaveTypeId", leaveRequest.getLeaveTypeId().toString(),
-                    "startDate", leaveRequest.getStartDate().toString(),
-                    "endDate", leaveRequest.getEndDate().toString()));
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("leaveRequestId", leaveRequest.getId().toString());
+            payload.put("leaveTypeId", leaveRequest.getLeaveTypeId().toString());
+            payload.put("startDate", leaveRequest.getStartDate().toString());
+            payload.put("endDate", leaveRequest.getEndDate().toString());
+            employeeRepository.findById(leaveRequest.getEmployeeId())
+                    .ifPresent(employee -> payload.put("employeeName", employee.getFullName()));
+            leaveTypeRepository.findById(leaveRequest.getLeaveTypeId())
+                    .ifPresent(leaveType -> payload.put("leaveTypeName", leaveType.getName()));
+            return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize leave request notification payload", e);
         }

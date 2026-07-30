@@ -54,6 +54,10 @@ class LeadReassignmentIT extends AbstractIntegrationTest {
         assertThat(notification.get("type").asText()).isEqualTo("LEAD_REASSIGNED");
         assertThat(notification.get("read").asBoolean()).isFalse();
         assertThat(notification.get("payload").asText()).contains(leadId).contains("Reassignment Co");
+        // reassignedByName is denormalized into the payload so the notification message can say
+        // who did the reassigning, not just which lead (see LeadService#buildReassignmentPayload).
+        assertThat(parse(notification.get("payload").asText()).get("reassignedByName").asText())
+                .isEqualTo("Admin User");
 
         // The original owner (no longer the owner) has no such notification.
         JsonNode originalOwnerNotifications = getNotifications(originalOwner.accessToken(), false);

@@ -25,6 +25,7 @@ import com.salesmanager.crm.notification.NotificationType;
 import com.salesmanager.crm.security.CurrentUser;
 import com.salesmanager.crm.security.UserPrincipal;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -327,8 +328,11 @@ public class LeadService {
         // saveAndFlush - see EmployeeService#create's comment re: @CreationTimestamp/@UpdateTimestamp.
         Lead saved = leadRepository.saveAndFlush(lead);
 
+        String reassignedByName = employeeRepository.findById(currentUser.get().getEmployeeId())
+                .map(Employee::getFullName)
+                .orElse(null);
         notificationService.create(newOwner.getId(), NotificationType.LEAD_REASSIGNED,
-                buildReassignmentPayload(saved));
+                buildReassignmentPayload(saved, reassignedByName));
 
         // saved.getOwnerId() is already the NEW owner (set above) - the activity row records
         // who owned this lead AS OF this event, per ActivityLog's denormalization rationale.
@@ -343,7 +347,8 @@ public class LeadService {
         UserPrincipal principal = currentUser.get();
         Specification<Lead> spec = Specification
                 .where(LeadSpecifications.hasStatus(filter.status()))
-                .and(LeadSpecifications.hasInterestLevel(filter.interestLevelId()));
+                .and(LeadSpecifications.hasInterestLevel(filter.interestLevelId()))
+                .and(LeadSpecifications.matchesSearch(filter.search()));
 
         if (principal.getRole() == Role.EMPLOYEE) {
             // TEAM_VISIBILITY (see EmployeeHierarchyService#getTeamVisibilityScope): empty
@@ -489,11 +494,18 @@ public class LeadService {
     }
 
     /** Small hand-built JSON payload for the LEAD_REASSIGNED notification - see reassign(). */
-    private String buildReassignmentPayload(Lead lead) {
+    /** reassignedByName is best-effort (omitted if the acting employee couldn't be resolved,
+     * which shouldn't happen in practice) so the notification message can say "Priya Sharma
+     * reassigned you the lead ..." instead of just naming the lead. */
+    private String buildReassignmentPayload(Lead lead, String reassignedByName) {
         try {
-            return objectMapper.writeValueAsString(Map.of(
-                    "leadId", lead.getId().toString(),
-                    "companyName", lead.getCompanyName()));
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("leadId", lead.getId().toString());
+            payload.put("companyName", lead.getCompanyName());
+            if (reassignedByName != null) {
+                payload.put("reassignedByName", reassignedByName);
+            }
+            return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize LEAD_REASSIGNED notification payload", e);
         }

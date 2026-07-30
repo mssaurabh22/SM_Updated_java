@@ -1,7 +1,9 @@
 package com.salesmanager.crm.reporting;
 
 import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
+import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
+import com.salesmanager.crm.reporting.dto.RevenueResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import java.time.LocalDate;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -42,5 +44,17 @@ public class ReportingController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo) {
         return reportingService.visitsCompletedVsMissed(dateFrom, dateTo);
+    }
+
+    @GetMapping("/leads-by-source")
+    public LeadsBySourceResponse leadsBySource() {
+        return reportingService.leadsBySource();
+    }
+
+    @GetMapping("/revenue")
+    public RevenueResponse revenue(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo) {
+        return reportingService.revenue(dateFrom, dateTo);
     }
 }

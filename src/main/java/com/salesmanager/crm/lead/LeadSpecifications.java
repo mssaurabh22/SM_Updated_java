@@ -1,5 +1,6 @@
 package com.salesmanager.crm.lead;
 
+import jakarta.persistence.criteria.Predicate;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.jpa.domain.Specification;
@@ -33,5 +34,26 @@ final class LeadSpecifications {
     static Specification<Lead> hasInterestLevel(UUID interestLevelId) {
         return (root, query, cb) ->
                 interestLevelId == null ? null : cb.equal(root.get("interestLevelId"), interestLevelId);
+    }
+
+    /** Case-insensitive substring match across companyName/contactPerson/contactNo/email - for
+     * the "find an existing lead" picker (see LeadFilter#search's javadoc). email is nullable,
+     * so its LIKE predicate is guarded with an IS NOT NULL check first (Postgres LOWER(NULL)
+     * evaluates to NULL, which a LIKE comparison never matches, but being explicit here avoids
+     * relying on that implicitly). */
+    static Specification<Lead> matchesSearch(String term) {
+        if (term == null || term.isBlank()) {
+            return null;
+        }
+        String likePattern = "%" + term.trim().toLowerCase() + "%";
+        return (root, query, cb) -> {
+            Predicate companyMatch = cb.like(cb.lower(root.get("companyName")), likePattern);
+            Predicate contactMatch = cb.like(cb.lower(root.get("contactPerson")), likePattern);
+            Predicate phoneMatch = cb.like(cb.lower(root.get("contactNo")), likePattern);
+            Predicate emailMatch = cb.and(
+                    cb.isNotNull(root.get("email")),
+                    cb.like(cb.lower(root.get("email")), likePattern));
+            return cb.or(companyMatch, contactMatch, phoneMatch, emailMatch);
+        };
     }
 }

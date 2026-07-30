@@ -95,6 +95,13 @@ class SchedulerIT extends AbstractIntegrationTest {
         assertThat(adminNotifications).hasSize(1);
         assertThat(adminNotifications.get(0).get("payload").asText())
                 .contains(overdueVisitId.toString()).contains(leadId.toString());
+        // companyName/visitDate/scheduledTime are denormalized into the payload so the
+        // notification message can name the actual lead and when the visit was due, instead of
+        // a generic fallback (see MissedVisitJob#buildPayload).
+        JsonNode timedPayload = parse(adminNotifications.get(0).get("payload").asText());
+        assertThat(timedPayload.get("companyName").asText()).isEqualTo("Timed Sweep Co");
+        assertThat(timedPayload.get("visitDate").asText()).isEqualTo(LocalDate.now().minusDays(1).toString());
+        assertThat(timedPayload.get("scheduledTime").asText()).startsWith("10:00");
 
         List<JsonNode> secondAdminNotifications = notificationsOfType(secondAdmin.accessToken(), "VISIT_MISSED");
         assertThat(secondAdminNotifications).hasSize(1);
@@ -203,6 +210,11 @@ class SchedulerIT extends AbstractIntegrationTest {
         List<JsonNode> ownerNotifications = notificationsOfType(owner.accessToken(), "LEAD_LAPSED");
         assertThat(ownerNotifications).hasSize(1);
         assertThat(ownerNotifications.get(0).get("payload").asText()).contains(overdueLeadId.toString());
+        // companyName/nextFollowupDate are denormalized into the payload so the notification
+        // message can name the actual lead and the date that passed (see LapsedLeadJob#buildPayload).
+        JsonNode lapsedPayload = parse(ownerNotifications.get(0).get("payload").asText());
+        assertThat(lapsedPayload.get("companyName").asText()).isEqualTo("Lapsed Sweep Co");
+        assertThat(lapsedPayload.get("nextFollowupDate").asText()).isEqualTo(LocalDate.now().minusDays(1).toString());
     }
 
     @Test

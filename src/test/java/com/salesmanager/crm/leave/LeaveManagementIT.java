@@ -131,13 +131,20 @@ class LeaveManagementIT extends AbstractIntegrationTest {
         assertThat(mine.get(0).get("status").asText()).isEqualTo("APPROVED");
 
         JsonNode notifications = parse(get("/notifications", report.accessToken()).getBody()).get("content");
-        boolean hasApprovedNotification = false;
+        JsonNode approvedNotification = null;
         for (JsonNode notification : notifications) {
             if (notification.get("type").asText().equals("LEAVE_REQUEST_APPROVED")) {
-                hasApprovedNotification = true;
+                approvedNotification = notification;
             }
         }
-        assertThat(hasApprovedNotification).isTrue();
+        assertThat(approvedNotification).isNotNull();
+        // employeeName/leaveTypeName are denormalized into the payload at write time so the
+        // notification message can read "Your Lifecycle Earned Leave request ... was approved"
+        // without a second lookup (see LeaveRequestService#buildPayload).
+        JsonNode approvedPayload = parse(approvedNotification.get("payload").asText());
+        assertThat(approvedPayload.get("leaveTypeName").asText()).isEqualTo("Lifecycle Earned Leave");
+        assertThat(approvedPayload.get("startDate").asText()).isEqualTo(monday.toString());
+        assertThat(approvedPayload.get("endDate").asText()).isEqualTo(tuesday.toString());
 
         JsonNode balances = parse(get("/leave-balances/mine", report.accessToken()).getBody());
         boolean foundUsedDays = false;

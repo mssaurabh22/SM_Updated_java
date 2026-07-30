@@ -4,14 +4,23 @@ import com.salesmanager.crm.employee.Employee;
 import com.salesmanager.crm.employee.EmployeeHierarchyService;
 import com.salesmanager.crm.employee.EmployeeRepository;
 import com.salesmanager.crm.employee.Role;
+import com.salesmanager.crm.entitlement.EntitlementService;
+import com.salesmanager.crm.entitlement.FeatureEntitlement;
+import com.salesmanager.crm.invoicing.InvoiceRepository;
 import com.salesmanager.crm.lead.Lead;
 import com.salesmanager.crm.lead.LeadOwnerCount;
 import com.salesmanager.crm.lead.LeadRepository;
+import com.salesmanager.crm.lead.LeadSourceCount;
 import com.salesmanager.crm.lead.LeadStatus;
 import com.salesmanager.crm.lead.LeadStatusCount;
+import com.salesmanager.crm.masterdata.MasterData;
+import com.salesmanager.crm.masterdata.MasterDataRepository;
 import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
+import com.salesmanager.crm.reporting.dto.LeadSourceBreakdown;
+import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.OwnerBreakdown;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
+import com.salesmanager.crm.reporting.dto.RevenueResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import com.salesmanager.crm.security.CurrentUser;
 import com.salesmanager.crm.security.UserPrincipal;
@@ -20,10 +29,13 @@ import com.salesmanager.crm.visit.VisitStatusCount;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -51,16 +63,25 @@ public class ReportingService {
     private final VisitRepository visitRepository;
     private final EmployeeRepository employeeRepository;
     private final EmployeeHierarchyService employeeHierarchyService;
+    private final MasterDataRepository masterDataRepository;
+    private final InvoiceRepository invoiceRepository;
+    private final EntitlementService entitlementService;
     private final CurrentUser currentUser;
 
     public ReportingService(LeadRepository leadRepository, VisitRepository visitRepository,
                              EmployeeRepository employeeRepository,
                              EmployeeHierarchyService employeeHierarchyService,
+                             MasterDataRepository masterDataRepository,
+                             InvoiceRepository invoiceRepository,
+                             EntitlementService entitlementService,
                              CurrentUser currentUser) {
         this.leadRepository = leadRepository;
         this.visitRepository = visitRepository;
         this.employeeRepository = employeeRepository;
         this.employeeHierarchyService = employeeHierarchyService;
+        this.masterDataRepository = masterDataRepository;
+        this.invoiceRepository = invoiceRepository;
+        this.entitlementService = entitlementService;
         this.currentUser = currentUser;
     }
 
@@ -170,6 +191,74 @@ public class ReportingService {
                 : roundToTwoDecimals(completed * 100.0 / resolved);
 
         return new VisitsCompletedVsMissedResponse(completed, missed, planned, completionRatePercent);
+    }
+
+    /** Feeds the Dashboard's "Open Visits" stat - all-time PLANNED count (no date bounds),
+     * i.e. every visit still awaiting an outcome, not just those due in a specific window. */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public long openVisitsCount() {
+        return visitsCompletedVsMissed(null, null).planned();
+    }
+
+    /**
+     * Dashboard's "Leads by Source" chart - one bucket per distinct leadSourceId, resolved to
+     * its master-data label, sorted by count descending. Leads with no leadSourceId (free-text
+     * leadSourceOther, or genuinely blank) are grouped into a single "Other" bucket, same
+     * "group free-text/unset values together" convention this codebase already uses elsewhere
+     * for reporting on creatable fields.
+     */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public LeadsBySourceResponse leadsBySource() {
+        Set<UUID> ownerScope = resolveOwnerScope();
+        List<LeadSourceCount> rows = ownerScope == null
+                ? leadRepository.countGroupedByLeadSource()
+                : leadRepository.countGroupedByLeadSourceForOwners(ownerScope);
+
+        Set<UUID> sourceIds = rows.stream()
+                .map(LeadSourceCount::getLeadSourceId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, String> labelById = masterDataRepository.findAllById(sourceIds).stream()
+                .collect(Collectors.toMap(MasterData::getId, MasterData::getLabel));
+
+        Map<String, Long> countByLabel = new LinkedHashMap<>();
+        for (LeadSourceCount row : rows) {
+            String label = row.getLeadSourceId() == null
+                    ? "Other"
+                    : labelById.getOrDefault(row.getLeadSourceId(), "Other");
+            countByLabel.merge(label, row.getCount(), Long::sum);
+        }
+
+        List<LeadSourceBreakdown> bySource = countByLabel.entrySet().stream()
+                .map(e -> new LeadSourceBreakdown(e.getKey(), e.getValue()))
+                .sorted(Comparator.comparingLong(LeadSourceBreakdown::count).reversed())
+                .toList();
+        return new LeadsBySourceResponse(bySource);
+    }
+
+    /**
+     * Dashboard's "Revenue (YTD)" stat - gated behind INVENTORY_MANAGEMENT (Invoicing is an
+     * opt-in feature) so a non-entitled org gets {@code entitled=false} rather than a
+     * misleading zero. resolveOwnerScope() runs FIRST regardless of entitlement, so a plain
+     * EMPLOYEE without TEAM_VISIBILITY still gets the same 403 every other reporting endpoint
+     * gives them - the entitlement check only decides what a permitted caller sees, not who's
+     * permitted at all. dateFrom/dateTo default to the calendar-year-to-date range (Jan 1 of
+     * this year through today) when omitted, matching the "YTD" label.
+     */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public RevenueResponse revenue(LocalDate dateFrom, LocalDate dateTo) {
+        Set<UUID> ownerScope = resolveOwnerScope();
+        UUID organizationId = currentUser.get().getOrganizationId();
+        if (!entitlementService.isEntitled(organizationId, FeatureEntitlement.INVENTORY_MANAGEMENT)) {
+            return new RevenueResponse(false, BigDecimal.ZERO);
+        }
+
+        LocalDate effectiveFrom = dateFrom != null ? dateFrom : LocalDate.now().withDayOfYear(1);
+        LocalDate effectiveTo = dateTo != null ? dateTo : LocalDate.now();
+        BigDecimal total = ownerScope == null
+                ? invoiceRepository.sumGrandTotalBetween(effectiveFrom, effectiveTo)
+                : invoiceRepository.sumGrandTotalForOwnersBetween(ownerScope, effectiveFrom, effectiveTo);
+        return new RevenueResponse(true, total);
     }
 
     /**

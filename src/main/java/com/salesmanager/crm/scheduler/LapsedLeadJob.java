@@ -103,10 +103,12 @@ public class LapsedLeadJob {
                 UUID organizationId = (UUID) row[1];
                 UUID ownerId = (UUID) row[2];
 
-                String payload = buildPayload(leadId);
-                // Loaded here (same RLS-bypass window already active for this whole method) just
-                // for companyName - ownerId is already available from the RETURNING row above.
-                String companyName = leadRepository.findById(leadId).map(Lead::getCompanyName).orElse(null);
+                // Loaded here (same RLS-bypass window already active for this whole method) for
+                // companyName/nextFollowupDate - ownerId is already available from the RETURNING
+                // row above.
+                Lead lead = leadRepository.findById(leadId).orElse(null);
+                String companyName = lead != null ? lead.getCompanyName() : null;
+                String payload = buildPayload(leadId, lead);
                 // See MissedVisitJob#processMissedVisits for why TenantContext must be set
                 // (and cleared) around each notification/activity-log-creation call in a
                 // scheduled job.
@@ -151,10 +153,20 @@ public class LapsedLeadJob {
     }
 
     /** Small hand-built JSON payload for the LEAD_LAPSED notification, same style as
-     *  LeadService#buildReassignmentPayload for LEAD_REASSIGNED. */
-    private String buildPayload(UUID leadId) {
+     *  LeadService#buildReassignmentPayload for LEAD_REASSIGNED. companyName/nextFollowupDate
+     *  are included (when the lead could still be loaded) so the notification message can name
+     *  the actual lead and the date that passed, instead of the bare generic fallback. */
+    private String buildPayload(UUID leadId, Lead lead) {
         try {
-            return objectMapper.writeValueAsString(Map.of("leadId", leadId.toString()));
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("leadId", leadId.toString());
+            if (lead != null) {
+                payload.put("companyName", lead.getCompanyName());
+                if (lead.getNextFollowupDate() != null) {
+                    payload.put("nextFollowupDate", lead.getNextFollowupDate().toString());
+                }
+            }
+            return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize LEAD_LAPSED notification payload", e);
         }

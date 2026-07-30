@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -53,6 +54,9 @@ class ReportingIT extends AbstractIntegrationTest {
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @Value("${platform.admin.key}")
+    private String platformAdminKey;
 
     @Test
     void pipelineSummary_conversionRate_andVisitsReport_matchSeededData_andEmployeeGets403() {
@@ -196,7 +200,104 @@ class ReportingIT extends AbstractIntegrationTest {
         assertThat(otherPipeline.get("byStatus").get("NEW").asLong()).isEqualTo(6);
     }
 
+    @Test
+    void leadsBySource_groupsByResolvedLabelWithOtherBucket_sortedByCountDescending() {
+        AuthResponse admin = registerOrganization("Leads By Source Org", "Source Admin");
+        AuthResponse employee = createAndLoginEmployee(admin.accessToken(), "sourceEmployee");
+        Masters masters = loadMasters(admin.accessToken());
+        JsonNode leadSources = parse(get("/masters/LEAD_SOURCE", admin.accessToken()).getBody());
+        String sourceA = leadSources.get(0).get("id").asText();
+        String sourceALabel = leadSources.get(0).get("label").asText();
+        String sourceB = leadSources.get(1).get("id").asText();
+        String sourceBLabel = leadSources.get(1).get("label").asText();
+
+        createLeadWithSource(admin.accessToken(), masters, "Source A Lead 1", "9200000001", sourceA, null);
+        createLeadWithSource(admin.accessToken(), masters, "Source A Lead 2", "9200000002", sourceA, null);
+        createLeadWithSource(admin.accessToken(), masters, "Source B Lead 1", "9200000003", sourceB, null);
+        createLeadWithSource(admin.accessToken(), masters, "Free Text Source Lead", "9200000004", null, "Some Trade Show");
+
+        JsonNode response = getJson("/reports/leads-by-source", admin.accessToken());
+        JsonNode bySource = response.get("bySource");
+        assertThat(bySource.size()).isEqualTo(3);
+        assertThat(bySource.get(0).get("label").asText()).isEqualTo(sourceALabel);
+        assertThat(bySource.get(0).get("count").asLong()).isEqualTo(2);
+        // sourceB and "Other" both have count 1 - order between equal counts isn't asserted,
+        // just that both buckets exist with the right counts.
+        Map<String, Long> countByLabel = new HashMap<>();
+        for (JsonNode row : bySource) {
+            countByLabel.put(row.get("label").asText(), row.get("count").asLong());
+        }
+        assertThat(countByLabel.get(sourceBLabel)).isEqualTo(1);
+        assertThat(countByLabel.get("Other")).isEqualTo(1);
+
+        assertThat(get("/reports/leads-by-source", employee.accessToken()).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void revenue_notEntitled_returnsZeroWithEntitledFalse_thenTracksInvoicesOnceGranted() {
+        AuthResponse admin = registerOrganization("Revenue Org", "Revenue Admin");
+        AuthResponse employee = createAndLoginEmployee(admin.accessToken(), "revenueEmployee");
+
+        JsonNode beforeGrant = getJson("/reports/revenue", admin.accessToken());
+        assertThat(beforeGrant.get("entitled").asBoolean()).isFalse();
+        assertThat(beforeGrant.get("revenue").asDouble()).isEqualTo(0.0);
+
+        grantInventoryManagement(admin.orgId());
+
+        Map<String, Object> lineItem = new HashMap<>();
+        lineItem.put("description", "Consulting");
+        lineItem.put("quantity", 1);
+        lineItem.put("unitPrice", 500.00);
+        lineItem.put("taxRatePercent", 0);
+        Map<String, Object> invoiceBody = new HashMap<>();
+        invoiceBody.put("customerName", "Revenue Test Customer");
+        invoiceBody.put("invoiceDate", LocalDate.now().toString());
+        invoiceBody.put("lineItems", java.util.List.of(lineItem));
+        ResponseEntity<String> invoiceResponse = post("/invoices", admin.accessToken(), invoiceBody);
+        assertThat(invoiceResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        JsonNode afterInvoice = getJson("/reports/revenue", admin.accessToken());
+        assertThat(afterInvoice.get("entitled").asBoolean()).isTrue();
+        assertThat(afterInvoice.get("revenue").asDouble()).isEqualTo(500.0);
+
+        assertThat(get("/reports/revenue", employee.accessToken()).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
     // ---- helpers ----
+
+    private void grantInventoryManagement(UUID orgId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("action", "GRANT");
+        body.put("grantedBy", "ReportingIT");
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Platform-Key", platformAdminKey);
+        ResponseEntity<String> response = restTemplate.exchange(
+                baseUrl() + "/internal/organizations/" + orgId + "/entitlements/INVENTORY_MANAGEMENT",
+                HttpMethod.PATCH, new HttpEntity<>(body, headers), String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    private String createLeadWithSource(String token, Masters masters, String companyName, String contactNo,
+                                         String leadSourceId, String leadSourceOther) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("companyName", companyName);
+        body.put("contactPerson", "Contact " + contactNo);
+        body.put("contactNo", contactNo);
+        body.put("cityId", masters.cityId);
+        body.put("industryId", masters.industryId);
+        if (leadSourceId != null) {
+            body.put("leadSourceId", leadSourceId);
+        } else {
+            body.put("leadSourceOther", leadSourceOther);
+        }
+        body.put("logAsVisitToday", false);
+        ResponseEntity<String> response = post("/leads", token, body);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return parse(response.getBody()).get("id").asText();
+    }
 
     private record Masters(String cityId, String leadSourceId, String industryId) {
     }

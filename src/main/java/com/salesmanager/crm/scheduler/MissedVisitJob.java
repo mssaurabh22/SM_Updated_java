@@ -14,6 +14,8 @@ import com.salesmanager.crm.notification.NotificationType;
 import com.salesmanager.crm.security.TenantContext;
 import com.salesmanager.crm.security.TenantSessionManager;
 import jakarta.persistence.EntityManager;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -50,7 +52,7 @@ public class MissedVisitJob {
     private static final long TIMED_SWEEP_LOCK_KEY = 913_010_001L;
     private static final long UNTIMED_SWEEP_LOCK_KEY = 913_010_002L;
 
-    private static final String RETURNING_COLUMNS = "id, organization_id, lead_id";
+    private static final String RETURNING_COLUMNS = "id, organization_id, lead_id, visit_date, scheduled_time";
 
     private final EntityManager entityManager;
     private final TenantSessionManager tenantSessionManager;
@@ -137,6 +139,8 @@ public class MissedVisitJob {
                 UUID visitId = (UUID) row[0];
                 UUID organizationId = (UUID) row[1];
                 UUID leadId = (UUID) row[2];
+                LocalDate visitDate = toLocalDate(row[3]);
+                LocalTime scheduledTime = toLocalTime(row[4]);
 
                 List<Employee> admins = adminsByOrg.computeIfAbsent(organizationId,
                         orgId -> employeeRepository.findByOrganizationIdAndRole(orgId, Role.ADMIN));
@@ -158,7 +162,7 @@ public class MissedVisitJob {
                     continue;
                 }
 
-                String payload = buildPayload(visitId, leadId);
+                String payload = buildPayload(visitId, leadId, lead, visitDate, scheduledTime);
                 // Notification#assignTenantOnPersist (and ActivityLog#assignTenantOnPersist,
                 // identically) requires a TenantContext to stamp organizationId - there is none
                 // ambient in a scheduled job, so set it just for this org's notification/
@@ -183,14 +187,44 @@ public class MissedVisitJob {
     }
 
     /** Small hand-built JSON payload for the VISIT_MISSED notification, same style as
-     *  LeadService#buildReassignmentPayload for LEAD_REASSIGNED. */
-    private String buildPayload(UUID visitId, UUID leadId) {
+     *  LeadService#buildReassignmentPayload for LEAD_REASSIGNED. companyName/visitDate/
+     *  scheduledTime are included (when available) so the notification message can say
+     *  "a visit for 'Acme Corp' scheduled on 21 Jul, 06:00 was missed" instead of the bare
+     *  generic fallback. */
+    private String buildPayload(UUID visitId, UUID leadId, Lead lead, LocalDate visitDate, LocalTime scheduledTime) {
         try {
-            return objectMapper.writeValueAsString(Map.of(
-                    "visitId", visitId.toString(),
-                    "leadId", leadId.toString()));
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("visitId", visitId.toString());
+            payload.put("leadId", leadId.toString());
+            if (lead != null) {
+                payload.put("companyName", lead.getCompanyName());
+            }
+            if (visitDate != null) {
+                payload.put("visitDate", visitDate.toString());
+            }
+            if (scheduledTime != null) {
+                payload.put("scheduledTime", scheduledTime.toString());
+            }
+            return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize VISIT_MISSED notification payload", e);
         }
+    }
+
+    /** Native RETURNING results come back as java.sql.Date/Time via the PostgreSQL JDBC driver
+     * (no result-class mapping is given to this createNativeQuery call), not java.time types
+     * directly - converted here once rather than at every call site. */
+    private static LocalDate toLocalDate(Object value) {
+        if (value == null) return null;
+        if (value instanceof LocalDate localDate) return localDate;
+        if (value instanceof java.sql.Date sqlDate) return sqlDate.toLocalDate();
+        throw new IllegalStateException("Unexpected date type: " + value.getClass());
+    }
+
+    private static LocalTime toLocalTime(Object value) {
+        if (value == null) return null;
+        if (value instanceof LocalTime localTime) return localTime;
+        if (value instanceof java.sql.Time sqlTime) return sqlTime.toLocalTime();
+        throw new IllegalStateException("Unexpected time type: " + value.getClass());
     }
 }
