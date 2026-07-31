@@ -3,6 +3,7 @@ package com.salesmanager.crm.notification;
 import com.salesmanager.crm.common.NotFoundException;
 import com.salesmanager.crm.security.CurrentUser;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -19,12 +20,22 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final CurrentUser currentUser;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public NotificationService(NotificationRepository notificationRepository, CurrentUser currentUser) {
+    public NotificationService(NotificationRepository notificationRepository, CurrentUser currentUser,
+                                ApplicationEventPublisher eventPublisher) {
         this.notificationRepository = notificationRepository;
         this.currentUser = currentUser;
+        this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * Every call site here runs with an ambient TenantContext already set - either a normal
+     * authenticated request, or a scheduled job that has explicitly set one around this exact
+     * call (MissedVisitJob/LapsedLeadJob - see their class javadocs) - so organizationId is
+     * always available here to stamp onto the published event without needing it as a separate
+     * parameter on every one of the 6 existing call sites.
+     */
     // saveAndFlush - see EmployeeService#create's comment re: @CreationTimestamp/@UpdateTimestamp.
     @Transactional
     public Notification create(UUID recipientId, NotificationType type, String payload) {
@@ -34,7 +45,10 @@ public class NotificationService {
                 .payload(payload)
                 .read(false)
                 .build();
-        return notificationRepository.saveAndFlush(notification);
+        Notification saved = notificationRepository.saveAndFlush(notification);
+        eventPublisher.publishEvent(new NotificationCreatedEvent(
+                saved.getId(), saved.getOrganizationId(), recipientId, type, payload));
+        return saved;
     }
 
     @Transactional(readOnly = true)

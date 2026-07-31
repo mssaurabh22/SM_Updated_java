@@ -78,6 +78,13 @@ public class SecurityConfig {
                         // is instead a shared-secret X-Platform-Key header, checked inline in
                         // the controller itself, not by Spring Security.
                         .requestMatchers("/internal/**").permitAll()
+                        // Google/Microsoft redirect the browser straight here after consent - a
+                        // plain full-page navigation, so no Authorization header is (or can be)
+                        // attached. Safe despite being unauthenticated: CalendarOAuthStateStore's
+                        // single-use, short-lived state token (minted only during the earlier,
+                        // normally-authenticated authorize-url call) is what recovers which
+                        // employee this callback is for - see CalendarConnectionController.
+                        .requestMatchers("/calendar-connections/*/callback").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
                         .anyRequest().authenticated())
                 // Without explicit handlers, Spring Security's stateless default falls back to

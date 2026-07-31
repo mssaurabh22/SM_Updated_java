@@ -28,5 +28,21 @@ public enum FeatureEntitlement {
      * separately gated add-on). Gates every endpoint in the {@code inventory} and
      * {@code invoicing} packages via {@link RequireEntitlement}.
      */
-    INVENTORY_MANAGEMENT
+    INVENTORY_MANAGEMENT,
+
+    /**
+     * Gates instant Firebase Cloud Messaging push delivery for the Notification Center - the
+     * {@code notifications} table/API stay the source of truth regardless of this entitlement,
+     * this only controls whether a device also gets pushed an instant alert. Checked
+     * programmatically (like TEAM_VISIBILITY) from PushNotificationEventListener, not via
+     * {@link RequireEntitlement}, since {@code POST /device-tokens} itself is gated but the
+     * decision to actually push is made per-notification, not per-endpoint.
+     */
+    PUSH_NOTIFICATIONS,
+
+    /**
+     * Gates live sync of an employee's own scheduled Visits into their personal Google Calendar
+     * or Outlook (Microsoft Graph) calendar - see calendar.CalendarSyncService.
+     */
+    CALENDAR_SYNC
 }

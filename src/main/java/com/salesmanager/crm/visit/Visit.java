@@ -150,4 +150,22 @@ public class Visit extends TenantAware {
      */
     @Column(name = "products_other")
     private String productsOther;
+
+    /**
+     * The provider's own event id (Google Calendar/Outlook), set once CalendarSyncEventListener
+     * successfully creates the event - its presence is what tells the sync service "update"
+     * instead of "create" on a later reschedule. Null if the owner has no calendar_connections
+     * row, CALENDAR_SYNC isn't entitled for the org, or the most recent sync attempt failed (see
+     * calendarSyncStatus/calendarSyncError below).
+     */
+    @Column(name = "external_calendar_event_id")
+    private String externalCalendarEventId;
+
+    /** SYNCED or FAILED - null means "never attempted" (no connection/entitlement at the time). */
+    @Column(name = "calendar_sync_status", length = 20)
+    private String calendarSyncStatus;
+
+    /** Short human-readable reason for the most recent FAILED sync attempt - null otherwise. */
+    @Column(name = "calendar_sync_error")
+    private String calendarSyncError;
 }

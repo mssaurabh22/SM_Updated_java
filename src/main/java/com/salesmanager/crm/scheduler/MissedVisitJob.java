@@ -150,6 +150,11 @@ public class MissedVisitJob {
                 // same RLS-bypass window findById already uses here (see EmployeeRepository's
                 // identical comment re: findById + bypassRlsForCrossTenantLookup).
                 Lead lead = leadRepository.findById(leadId).orElse(null);
+                // Whose visit this was - the ADMIN recipients (and the owner themself, seeing
+                // their own notification) both benefit from "missed BY whom", not just "missed".
+                Employee owner = lead != null
+                        ? employeeRepository.findById(lead.getOwnerId()).orElse(null)
+                        : null;
 
                 Set<UUID> recipientIds = new HashSet<>();
                 for (Employee admin : admins) {
@@ -162,7 +167,7 @@ public class MissedVisitJob {
                     continue;
                 }
 
-                String payload = buildPayload(visitId, leadId, lead, visitDate, scheduledTime);
+                String payload = buildPayload(visitId, leadId, lead, owner, visitDate, scheduledTime);
                 // Notification#assignTenantOnPersist (and ActivityLog#assignTenantOnPersist,
                 // identically) requires a TenantContext to stamp organizationId - there is none
                 // ambient in a scheduled job, so set it just for this org's notification/
@@ -188,16 +193,20 @@ public class MissedVisitJob {
 
     /** Small hand-built JSON payload for the VISIT_MISSED notification, same style as
      *  LeadService#buildReassignmentPayload for LEAD_REASSIGNED. companyName/visitDate/
-     *  scheduledTime are included (when available) so the notification message can say
-     *  "a visit for 'Acme Corp' scheduled on 21 Jul, 06:00 was missed" instead of the bare
-     *  generic fallback. */
-    private String buildPayload(UUID visitId, UUID leadId, Lead lead, LocalDate visitDate, LocalTime scheduledTime) {
+     *  scheduledTime/employeeName are included (when available) so the notification message
+     *  can say "a visit for 'Acme Corp' scheduled on 21 Jul, 06:00 was missed by Rajesh Kumar"
+     *  instead of the bare generic fallback. */
+    private String buildPayload(UUID visitId, UUID leadId, Lead lead, Employee owner,
+                                 LocalDate visitDate, LocalTime scheduledTime) {
         try {
             Map<String, Object> payload = new HashMap<>();
             payload.put("visitId", visitId.toString());
             payload.put("leadId", leadId.toString());
             if (lead != null) {
                 payload.put("companyName", lead.getCompanyName());
+            }
+            if (owner != null) {
+                payload.put("employeeName", owner.getFullName());
             }
             if (visitDate != null) {
                 payload.put("visitDate", visitDate.toString());

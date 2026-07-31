@@ -2,6 +2,7 @@ package com.salesmanager.crm.visit;
 
 import com.salesmanager.crm.activity.ActivityLogService;
 import com.salesmanager.crm.activity.ActivityType;
+import com.salesmanager.crm.calendar.VisitCalendarSyncEvent;
 import com.salesmanager.crm.common.NotFoundException;
 import com.salesmanager.crm.common.event.FollowUpScheduledEvent;
 import com.salesmanager.crm.employee.EmployeeHierarchyService;
@@ -121,6 +122,7 @@ public class VisitService {
             eventPublisher.publishEvent(new FollowUpScheduledEvent(
                     lead.getId(), lead.getOrganizationId(), request.nextVisitDate(), saved.getPurposeId()));
         }
+        eventPublisher.publishEvent(new VisitCalendarSyncEvent(saved.getId(), lead.getOrganizationId()));
 
         // Recorded on the PARENT lead - lead's ownerId/companyName here are its current values
         // (syncBackToLead above never touches either field), matching "who owns it / what it's
@@ -228,6 +230,7 @@ public class VisitService {
             eventPublisher.publishEvent(new FollowUpScheduledEvent(
                     lead.getId(), lead.getOrganizationId(), request.nextVisitDate(), saved.getPurposeId()));
         }
+        eventPublisher.publishEvent(new VisitCalendarSyncEvent(saved.getId(), lead.getOrganizationId()));
 
         return saved;
     }

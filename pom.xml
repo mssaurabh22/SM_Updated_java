@@ -23,6 +23,7 @@
         <testcontainers.version>1.19.7</testcontainers.version>
         <poi.version>5.2.5</poi.version>
         <openhtmltopdf.version>1.0.10</openhtmltopdf.version>
+        <firebase-admin.version>9.3.0</firebase-admin.version>
     </properties>
 
     <dependencies>
@@ -129,6 +130,17 @@
             <groupId>com.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-pdfbox</artifactId>
             <version>${openhtmltopdf.version}</version>
+        </dependency>
+
+        <!-- Firebase Admin SDK - the one third-party SDK used for the push-notification feature
+             (notification.PushNotificationService), rather than hand-rolling FCM's own OAuth2
+             service-account JWT-bearer auth flow. Google Calendar/Outlook (calendar package) are
+             called as plain REST instead - only FCM's own server-auth model is complex enough to
+             justify a full SDK. -->
+        <dependency>
+            <groupId>com.google.firebase</groupId>
+            <artifactId>firebase-admin</artifactId>
+            <version>${firebase-admin.version}</version>
         </dependency>
 
         <!-- Test -->

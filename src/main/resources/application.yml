@@ -66,3 +66,30 @@ platform:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+firebase:
+  # The service account's full JSON key content (not a file path), so no extra volume/secret
+  # mount is needed beyond the existing env-var-injection mechanism (systemd EnvironmentFile=,
+  # same as JWT_SECRET/PLATFORM_ADMIN_KEY). Left blank in dev - PushNotificationService detects
+  # a blank value and simply disables push rather than failing startup.
+  service-account-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+
+app:
+  # Where CalendarConnectionController redirects the browser back to after the OAuth
+  # provider's own callback finishes (?calendar=connected|error) - the built SPA's own origin,
+  # not the API's. Defaults to Vite's dev server for local dev.
+  frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
+
+calendar:
+  # Dev-only fallback - MUST be overridden via CALENDAR_TOKEN_ENCRYPTION_KEY env var in any real
+  # environment, same pattern as jwt.secret. See TokenEncryptionService for how this is used
+  # (SHA-256 hashed to a proper 32-byte AES-256 key, not used directly).
+  token-encryption-key: ${CALENDAR_TOKEN_ENCRYPTION_KEY:dev-only-calendar-key-change-me}
+  google:
+    client-id: ${GOOGLE_CALENDAR_CLIENT_ID:}
+    client-secret: ${GOOGLE_CALENDAR_CLIENT_SECRET:}
+    redirect-uri: ${GOOGLE_CALENDAR_REDIRECT_URI:http://localhost:8080/api/v1/calendar-connections/google/callback}
+  outlook:
+    client-id: ${OUTLOOK_CALENDAR_CLIENT_ID:}
+    client-secret: ${OUTLOOK_CALENDAR_CLIENT_SECRET:}
+    redirect-uri: ${OUTLOOK_CALENDAR_REDIRECT_URI:http://localhost:8080/api/v1/calendar-connections/outlook/callback}

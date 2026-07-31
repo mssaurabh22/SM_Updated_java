@@ -102,6 +102,7 @@ class SchedulerIT extends AbstractIntegrationTest {
         assertThat(timedPayload.get("companyName").asText()).isEqualTo("Timed Sweep Co");
         assertThat(timedPayload.get("visitDate").asText()).isEqualTo(LocalDate.now().minusDays(1).toString());
         assertThat(timedPayload.get("scheduledTime").asText()).startsWith("10:00");
+        assertThat(timedPayload.get("employeeName").asText()).isEqualTo("Test Employee timedOwner");
 
         List<JsonNode> secondAdminNotifications = notificationsOfType(secondAdmin.accessToken(), "VISIT_MISSED");
         assertThat(secondAdminNotifications).hasSize(1);
