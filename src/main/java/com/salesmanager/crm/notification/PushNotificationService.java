@@ -10,6 +10,7 @@ import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MessagingErrorCode;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,14 @@ import org.springframework.stereotype.Service;
  * initializes its own {@link FirebaseApp} lazily from {@code firebase.service-account-json},
  * and simply does nothing (never throws) if that's blank, so local dev without Firebase
  * credentials configured doesn't crash - see the class-level {@code enabled} flag below.
+ *
+ * {@code firebase.service-account-json} may be EITHER the raw JSON (fine in application.yml/
+ * application-local.yml, which don't reinterpret backslash escapes) OR that JSON base64-encoded
+ * (required for the production systemd EnvironmentFile= - it DOES unescape C-style sequences
+ * like the private key's embedded {@code \n}, turning them into real newlines that make the
+ * JSON invalid and silently truncate the private key, which surfaced as a genuine "Invalid
+ * PKCS#8 data" failure in production before this base64 path was added). Detected by whether
+ * the trimmed value starts with '{' - a raw JSON object - or not.
  *
  * Sends a DATA-only message (no {@code Notification} block) - the actual title/body text is
  * built client-side (service worker / foreground handler) from the same describeNotification()
@@ -44,8 +53,8 @@ public class PushNotificationService {
         this.enabled = initializeFirebaseApp(serviceAccountJson);
     }
 
-    private boolean initializeFirebaseApp(String serviceAccountJson) {
-        if (serviceAccountJson == null || serviceAccountJson.isBlank()) {
+    private boolean initializeFirebaseApp(String rawConfigValue) {
+        if (rawConfigValue == null || rawConfigValue.isBlank()) {
             log.warn("firebase.service-account-json not configured - push notifications disabled");
             return false;
         }
@@ -53,6 +62,7 @@ public class PushNotificationService {
             if (!FirebaseApp.getApps().isEmpty()) {
                 return true;
             }
+            String serviceAccountJson = decodeIfBase64(rawConfigValue);
             GoogleCredentials credentials = GoogleCredentials.fromStream(
                     new ByteArrayInputStream(serviceAccountJson.getBytes(StandardCharsets.UTF_8)));
             // GoogleCredentials.fromStream doesn't surface project_id back out on its own -
@@ -72,6 +82,13 @@ public class PushNotificationService {
             log.warn("Failed to initialize Firebase - push notifications disabled", e);
             return false;
         }
+    }
+
+    private static String decodeIfBase64(String value) {
+        if (value.trim().startsWith("{")) {
+            return value;
+        }
+        return new String(Base64.getDecoder().decode(value.trim()), StandardCharsets.UTF_8);
     }
 
     /**
