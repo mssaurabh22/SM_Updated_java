@@ -8,7 +8,6 @@ import com.salesmanager.crm.tenant.Organization;
 import com.salesmanager.crm.tenant.OrganizationRepository;
 import java.util.Base64;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +26,6 @@ import org.springframework.web.multipart.MultipartFile;
 public class BillingProfileService {
 
     private static final long MAX_LOGO_BYTES = 2L * 1024 * 1024;
-    private static final Set<String> ALLOWED_LOGO_CONTENT_TYPES = Set.of("image/png", "image/jpeg");
 
     private final OrganizationRepository organizationRepository;
     private final CurrentUser currentUser;
@@ -62,20 +60,50 @@ public class BillingProfileService {
         if (file.getSize() > MAX_LOGO_BYTES) {
             throw new InvalidLogoException("file", "Logo file must be at most 2MB");
         }
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_LOGO_CONTENT_TYPES.contains(contentType.toLowerCase())) {
-            throw new InvalidLogoException("file", "Logo must be a PNG or JPEG image");
-        }
-
-        Organization organization = loadCurrentOrganization();
+        byte[] bytes;
         try {
-            organization.setLogoImage(file.getBytes());
+            bytes = file.getBytes();
         } catch (java.io.IOException e) {
             throw new InvalidLogoException("file", "Failed to read uploaded logo file");
         }
-        organization.setLogoContentType(contentType);
+
+        // The browser-declared Content-Type on a multipart upload is derived from the file's
+        // NAME/extension, not its actual bytes - a WebP (or any other format) file that happens
+        // to be named "logo.png" is reported as image/png and would sail through a content-type-
+        // only check. openhtmltopdf/PDFBox has no WebP decoder (unlike a browser's <img> tag,
+        // which renders WebP natively regardless of declared type) - a mismatched real format
+        // silently fails at PDF-render time ("Can't read image file"), long after upload
+        // succeeded, which is exactly the bug this sniff-the-real-bytes check closes. The
+        // sniffed type - not the client's declared one - is what gets stored and served.
+        String actualContentType = detectImageContentType(bytes);
+        if (actualContentType == null) {
+            throw new InvalidLogoException("file",
+                    "Logo must be a genuine PNG or JPEG image (this file's content doesn't match either "
+                            + "format, even if its name suggests one - a WebP or other format saved with a "
+                            + ".png/.jpg extension is a common cause)");
+        }
+
+        Organization organization = loadCurrentOrganization();
+        organization.setLogoImage(bytes);
+        organization.setLogoContentType(actualContentType);
         Organization saved = organizationRepository.saveAndFlush(organization);
         return BillingProfileResponse.from(saved);
+    }
+
+    /** Sniffs the real format from magic bytes rather than trusting any client-declared
+     * Content-Type - see uploadLogo's javadoc comment for why this matters. Returns null for
+     * anything that isn't a genuine PNG or JPEG. */
+    private static String detectImageContentType(byte[] bytes) {
+        if (bytes.length >= 8
+                && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G'
+                && bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A) {
+            return "image/png";
+        }
+        if (bytes.length >= 3
+                && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF) {
+            return "image/jpeg";
+        }
+        return null;
     }
 
     @Transactional

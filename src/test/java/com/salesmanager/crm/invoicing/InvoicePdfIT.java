@@ -120,7 +120,12 @@ class InvoicePdfIT extends AbstractIntegrationTest {
         AuthResponse admin = registerOrganization("Logo Validation Org");
         grant(admin.orgId());
 
-        ResponseEntity<String> wrongType = putLogo(admin.accessToken(), ONE_PIXEL_PNG, "logo.gif", "image/gif");
+        // Genuine GIF magic bytes ("GIF89a...") - actually the wrong format, not just a
+        // mismatched label on real PNG bytes (see uploadLogo's content-sniffing rationale:
+        // a real PNG mislabeled as image/gif is correctly ACCEPTED now, since the bytes
+        // themselves are what's validated, not the client's declared type).
+        byte[] gifBytes = "GIF89a".getBytes(StandardCharsets.US_ASCII);
+        ResponseEntity<String> wrongType = putLogo(admin.accessToken(), gifBytes, "logo.gif", "image/gif");
         assertThat(wrongType.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 
         byte[] tooLarge = new byte[2 * 1024 * 1024 + 1];
@@ -128,6 +133,49 @@ class InvoicePdfIT extends AbstractIntegrationTest {
         assertThat(oversized.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 
         // Neither rejected attempt actually set a logo.
+        assertThat(get("/organizations/me/logo", admin.accessToken()).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    /** A real image whose declared Content-Type/filename extension is simply wrong (e.g. a
+     * PNG saved with a .gif extension by mistake) is still accepted - the actual bytes are
+     * what's validated, matching the fix for the WebP-mislabeled-as-PNG bug below. */
+    @Test
+    void logo_acceptsRealImage_evenWithMismatchedDeclaredType() {
+        AuthResponse admin = registerOrganization("Logo Mismatched Label Org");
+        grant(admin.orgId());
+
+        ResponseEntity<String> response = putLogo(admin.accessToken(), ONE_PIXEL_PNG, "logo.gif", "image/gif");
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(parse(response.getBody()).get("hasLogo").asBoolean()).isTrue();
+
+        // Served back with the SNIFFED real content-type, not the originally-declared one.
+        ResponseEntity<byte[]> download = restTemplate.exchange(baseUrl() + "/organizations/me/logo",
+                HttpMethod.GET, new HttpEntity<>(bearerHeaders(admin.accessToken())), byte[].class);
+        assertThat(download.getHeaders().getContentType()).isEqualTo(MediaType.IMAGE_PNG);
+    }
+
+    /**
+     * A real production bug (2026-08-02): a WebP file saved/exported with a ".png" filename gets
+     * a browser-declared Content-Type of "image/png" (derived from the filename, not the actual
+     * bytes) - it sailed through validation, previewed fine in Settings (a browser's <img> tag
+     * renders WebP natively), but silently failed to appear in the generated invoice PDF, since
+     * openhtmltopdf/PDFBox has no WebP decoder at all. BillingProfileService#uploadLogo now
+     * sniffs the real magic bytes rather than trusting the declared Content-Type - this proves a
+     * WebP file (RIFF container signature) is rejected up front with a clear error, regardless of
+     * what content-type/filename claims otherwise.
+     */
+    @Test
+    void logo_rejectsWebpFile_evenWhenDeclaredAsPng() {
+        AuthResponse admin = registerOrganization("Logo Webp Org");
+        grant(admin.orgId());
+
+        // RIFF container header + "WEBP" fourCC - the real magic bytes of any WebP file,
+        // regardless of VP8/VP8L/VP8X variant.
+        byte[] webpBytes = "RIFF    WEBPVP8 ".getBytes(StandardCharsets.US_ASCII);
+        ResponseEntity<String> response = putLogo(admin.accessToken(), webpBytes, "logo.png", "image/png");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(get("/organizations/me/logo", admin.accessToken()).getStatusCode())
                 .isEqualTo(HttpStatus.NOT_FOUND);
     }
