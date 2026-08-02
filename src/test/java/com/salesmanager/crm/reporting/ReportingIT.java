@@ -265,7 +265,122 @@ class ReportingIT extends AbstractIntegrationTest {
                 .isEqualTo(HttpStatus.FORBIDDEN);
     }
 
+    @Test
+    void visitsByType_groupsFieldVsTelephonic_zeroBucketIncluded_dateFiltered_andEmployeeGets403() {
+        AuthResponse admin = registerOrganization("Visits By Type Org", "Visits Type Admin");
+        AuthResponse employee = createAndLoginEmployee(admin.accessToken(), "visitsTypeEmployee");
+        Masters masters = loadMasters(admin.accessToken());
+        String leadId = createLead(admin.accessToken(), masters, "Visits Type Co", "Contact", "9300000001");
+
+        LocalDate today = LocalDate.now();
+        createVisit(admin.accessToken(), leadId, today, "FIELD");
+        createVisit(admin.accessToken(), leadId, today, "FIELD");
+        createVisit(admin.accessToken(), leadId, today, "TELEPHONIC");
+        createVisit(admin.accessToken(), leadId, today.plusDays(10), "TELEPHONIC");
+
+        JsonNode unfiltered = getJson("/reports/visits-by-type", admin.accessToken());
+        assertThat(unfiltered.get("byType").get("FIELD").asLong()).isEqualTo(2);
+        assertThat(unfiltered.get("byType").get("TELEPHONIC").asLong()).isEqualTo(2);
+        assertThat(unfiltered.get("total").asLong()).isEqualTo(4);
+
+        // Date-ranged: excludes the TELEPHONIC visit 10 days out.
+        String rangeQuery = "/reports/visits-by-type?dateFrom=" + today + "&dateTo=" + today;
+        JsonNode ranged = getJson(rangeQuery, admin.accessToken());
+        assertThat(ranged.get("byType").get("FIELD").asLong()).isEqualTo(2);
+        assertThat(ranged.get("byType").get("TELEPHONIC").asLong()).isEqualTo(1);
+        assertThat(ranged.get("total").asLong()).isEqualTo(3);
+
+        assertThat(get("/reports/visits-by-type", employee.accessToken()).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void interestLevelStatusMatrix_groupsHotWarmColdNotSet_inFixedRowOrder_andEmployeeGets403() {
+        AuthResponse admin = registerOrganization("Interest Matrix Org", "Interest Matrix Admin");
+        AuthResponse employee = createAndLoginEmployee(admin.accessToken(), "interestMatrixEmployee");
+        Masters masters = loadMasters(admin.accessToken());
+        JsonNode interestLevels = parse(get("/masters/INTEREST_LEVEL", admin.accessToken()).getBody());
+        String hotId = findMasterIdByCode(interestLevels, "HOT");
+        String warmId = findMasterIdByCode(interestLevels, "WARM");
+
+        // 2 Hot leads: one NEW, one CONTACTED.
+        String hotNew = createLeadWithInterest(admin.accessToken(), masters, "Hot New Co", "9400000001", hotId);
+        String hotContacted = createLeadWithInterest(admin.accessToken(), masters, "Hot Contacted Co", "9400000002", hotId);
+        patchStatus(admin.accessToken(), hotContacted, "CONTACTED", null);
+
+        // 1 Warm lead: NEGOTIATION.
+        String warmNegotiation = createLeadWithInterest(admin.accessToken(), masters, "Warm Negotiation Co",
+                "9400000003", warmId);
+        patchStatus(admin.accessToken(), warmNegotiation, "NEGOTIATION", null);
+
+        // 1 lead with no interest level set at all: NEW (falls into "Not Set").
+        createLead(admin.accessToken(), masters, "No Interest Co", "Contact", "9400000004");
+
+        JsonNode response = getJson("/reports/interest-level-status-matrix", admin.accessToken());
+        JsonNode rows = response.get("rows");
+        assertThat(rows.size()).isEqualTo(4);
+        // Fixed row order: Hot, Warm, Cold, Not Set.
+        assertThat(rows.get(0).get("interestLevel").asText()).isEqualToIgnoringCase("hot");
+        assertThat(rows.get(1).get("interestLevel").asText()).isEqualToIgnoringCase("warm");
+        assertThat(rows.get(2).get("interestLevel").asText()).isEqualToIgnoringCase("cold");
+        assertThat(rows.get(3).get("interestLevel").asText()).isEqualTo("Not Set");
+
+        JsonNode hotRow = rows.get(0);
+        assertThat(hotRow.get("byStatus").get("NEW").asLong()).isEqualTo(1);
+        assertThat(hotRow.get("byStatus").get("CONTACTED").asLong()).isEqualTo(1);
+        assertThat(hotRow.get("total").asLong()).isEqualTo(2);
+
+        JsonNode warmRow = rows.get(1);
+        assertThat(warmRow.get("byStatus").get("NEGOTIATION").asLong()).isEqualTo(1);
+        assertThat(warmRow.get("total").asLong()).isEqualTo(1);
+
+        JsonNode coldRow = rows.get(2);
+        assertThat(coldRow.get("total").asLong()).isEqualTo(0);
+
+        JsonNode notSetRow = rows.get(3);
+        assertThat(notSetRow.get("byStatus").get("NEW").asLong()).isEqualTo(1);
+        assertThat(notSetRow.get("total").asLong()).isEqualTo(1);
+
+        assertThat(get("/reports/interest-level-status-matrix", employee.accessToken()).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
     // ---- helpers ----
+
+    private String findMasterIdByCode(JsonNode masters, String code) {
+        for (JsonNode m : masters) {
+            if (m.get("code").asText().equalsIgnoreCase(code)) {
+                return m.get("id").asText();
+            }
+        }
+        throw new IllegalStateException("No master data row with code " + code);
+    }
+
+    private String createLeadWithInterest(String token, Masters masters, String companyName, String contactNo,
+                                           String interestLevelId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("companyName", companyName);
+        body.put("contactPerson", "Contact " + contactNo);
+        body.put("contactNo", contactNo);
+        body.put("cityId", masters.cityId);
+        body.put("leadSourceId", masters.leadSourceId);
+        body.put("industryId", masters.industryId);
+        body.put("interestLevelId", interestLevelId);
+        body.put("logAsVisitToday", false);
+        ResponseEntity<String> response = post("/leads", token, body);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return parse(response.getBody()).get("id").asText();
+    }
+
+    private String createVisit(String token, String leadId, LocalDate visitDate, String visitType) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("leadId", leadId);
+        body.put("visitDate", visitDate.toString());
+        body.put("visitType", visitType);
+        ResponseEntity<String> response = post("/visits", token, body);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return parse(response.getBody()).get("id").asText();
+    }
 
     private void grantInventoryManagement(UUID orgId) {
         Map<String, Object> body = new HashMap<>();

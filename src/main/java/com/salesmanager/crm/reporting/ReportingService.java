@@ -8,6 +8,7 @@ import com.salesmanager.crm.entitlement.EntitlementService;
 import com.salesmanager.crm.entitlement.FeatureEntitlement;
 import com.salesmanager.crm.invoicing.InvoiceRepository;
 import com.salesmanager.crm.lead.Lead;
+import com.salesmanager.crm.lead.LeadInterestStatusCount;
 import com.salesmanager.crm.lead.LeadOwnerCount;
 import com.salesmanager.crm.lead.LeadRepository;
 import com.salesmanager.crm.lead.LeadSourceCount;
@@ -15,20 +16,27 @@ import com.salesmanager.crm.lead.LeadStatus;
 import com.salesmanager.crm.lead.LeadStatusCount;
 import com.salesmanager.crm.masterdata.MasterData;
 import com.salesmanager.crm.masterdata.MasterDataRepository;
+import com.salesmanager.crm.masterdata.MasterType;
 import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
+import com.salesmanager.crm.reporting.dto.InterestLevelStatusMatrixResponse;
+import com.salesmanager.crm.reporting.dto.InterestLevelStatusRow;
 import com.salesmanager.crm.reporting.dto.LeadSourceBreakdown;
 import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.OwnerBreakdown;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
 import com.salesmanager.crm.reporting.dto.RevenueResponse;
+import com.salesmanager.crm.reporting.dto.VisitsByTypeResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import com.salesmanager.crm.security.CurrentUser;
 import com.salesmanager.crm.security.UserPrincipal;
 import com.salesmanager.crm.visit.VisitRepository;
 import com.salesmanager.crm.visit.VisitStatusCount;
+import com.salesmanager.crm.visit.VisitType;
+import com.salesmanager.crm.visit.VisitTypeCount;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -39,6 +47,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -234,6 +243,102 @@ public class ReportingService {
                 .sorted(Comparator.comparingLong(LeadSourceBreakdown::count).reversed())
                 .toList();
         return new LeadsBySourceResponse(bySource);
+    }
+
+    /**
+     * Reports' "Visits by Type" chart (Field vs Telephonic) - byType always contains both
+     * VisitType values (pre-seeded to zero) so the frontend gets a consistent chart regardless
+     * of which one happens to be empty in this org, same convention as pipelineSummary's
+     * byStatus.
+     */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public VisitsByTypeResponse visitsByType(LocalDate dateFrom, LocalDate dateTo) {
+        Set<UUID> ownerScope = resolveOwnerScope();
+        Map<VisitType, Long> byType = new EnumMap<>(VisitType.class);
+        for (VisitType type : VisitType.values()) {
+            byType.put(type, 0L);
+        }
+        long total = 0;
+        List<VisitTypeCount> rows;
+        if (ownerScope == null) {
+            rows = visitRepository.countGroupedByVisitType(dateFrom, dateTo);
+        } else {
+            Set<UUID> leadIds = leadRepository.findByOwnerIdIn(ownerScope).stream()
+                    .map(Lead::getId)
+                    .collect(Collectors.toSet());
+            rows = leadIds.isEmpty()
+                    ? List.of()
+                    : visitRepository.countGroupedByVisitTypeForLeadIds(leadIds, dateFrom, dateTo);
+        }
+        for (VisitTypeCount row : rows) {
+            byType.put(row.getVisitType(), row.getCount());
+            total += row.getCount();
+        }
+        return new VisitsByTypeResponse(byType, total);
+    }
+
+    /** Fixed display order for interestLevelStatusMatrix's rows - matches the business-critical,
+     * never-expanded INTEREST_LEVEL codes (see MasterType's own javadoc); "Not Set" is a residual
+     * bucket for a null interestLevelId (or a free-text interestLevelOther override), always
+     * shown last regardless of whether any lead actually falls into it. */
+    private static final List<String> INTEREST_LEVEL_CODE_ORDER = List.of("HOT", "WARM", "COLD");
+    private static final String INTEREST_LEVEL_NOT_SET = "Not Set";
+
+    /**
+     * Reports' "Interest Level x Status" matrix (e.g. "how many Hot leads are stuck in
+     * Contacted") - one row per interest level (Hot/Warm/Cold/Not Set), each with a count per
+     * LeadStatus. Counts LEADS (one row per lead, by its current interestLevelId/status), not
+     * visits - a lead's interest level and pipeline stage are both properties of the Lead
+     * itself, so this is the natural aggregate granularity (see the plan's own "Hot leads stuck
+     * in Contacted 2+ weeks" example use case).
+     */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public InterestLevelStatusMatrixResponse interestLevelStatusMatrix() {
+        Set<UUID> ownerScope = resolveOwnerScope();
+        List<LeadInterestStatusCount> rows = ownerScope == null
+                ? leadRepository.countGroupedByInterestLevelAndStatus()
+                : leadRepository.countGroupedByInterestLevelAndStatusForOwners(ownerScope);
+
+        // Resolves an interestLevelId to its canonical "Hot"/"Warm"/"Cold" bucket via CODE
+        // (stable, business-meaningful) rather than the admin-editable label directly - two
+        // lookups (id -> code, code -> display label) rather than one, but this is what lets
+        // the matrix's row order stay fixed (Hot, Warm, Cold, Not Set) regardless of how an org
+        // has relabeled its INTEREST_LEVEL master-data rows.
+        List<MasterData> interestLevelMasters = masterDataRepository.findByType(MasterType.INTEREST_LEVEL, Sort.unsorted());
+        Map<UUID, String> codeById = interestLevelMasters.stream()
+                .collect(Collectors.toMap(MasterData::getId, MasterData::getCode));
+        Map<String, String> labelByCode = interestLevelMasters.stream()
+                .collect(Collectors.toMap(MasterData::getCode, MasterData::getLabel, (a, b) -> a));
+
+        Map<String, Map<LeadStatus, Long>> byBucket = new LinkedHashMap<>();
+        for (String code : INTEREST_LEVEL_CODE_ORDER) {
+            byBucket.put(labelByCode.getOrDefault(code, code), emptyStatusMap());
+        }
+        byBucket.put(INTEREST_LEVEL_NOT_SET, emptyStatusMap());
+
+        for (LeadInterestStatusCount row : rows) {
+            String code = row.getInterestLevelId() == null ? null : codeById.get(row.getInterestLevelId());
+            String bucketLabel = code != null && labelByCode.containsKey(code)
+                    ? labelByCode.get(code)
+                    : INTEREST_LEVEL_NOT_SET;
+            byBucket.computeIfAbsent(bucketLabel, k -> emptyStatusMap())
+                    .merge(row.getStatus(), row.getCount(), Long::sum);
+        }
+
+        List<InterestLevelStatusRow> resultRows = new ArrayList<>();
+        for (Map.Entry<String, Map<LeadStatus, Long>> entry : byBucket.entrySet()) {
+            long rowTotal = entry.getValue().values().stream().mapToLong(Long::longValue).sum();
+            resultRows.add(new InterestLevelStatusRow(entry.getKey(), entry.getValue(), rowTotal));
+        }
+        return new InterestLevelStatusMatrixResponse(resultRows);
+    }
+
+    private static Map<LeadStatus, Long> emptyStatusMap() {
+        Map<LeadStatus, Long> map = new EnumMap<>(LeadStatus.class);
+        for (LeadStatus status : LeadStatus.values()) {
+            map.put(status, 0L);
+        }
+        return map;
     }
 
     /**

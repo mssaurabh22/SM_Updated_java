@@ -421,6 +421,53 @@ class LeadCrudIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    /**
+     * Reports section's filterable Leads table (state/city/product/date, alongside the
+     * pre-existing status/interestLevelId/search filters) - each new filter dimension is
+     * checked in isolation against a small, deliberately-overlapping set of leads.
+     */
+    @Test
+    void list_filtersByStateCityProductAndDateRange() {
+        AuthResponse admin = registerOrganization("Lead Extended Filter Org");
+        Masters masters = loadMasters(admin.accessToken());
+        JsonNode cityMasters = allMasters(admin.accessToken(), MasterType.CITY);
+        String cityId = cityMasters.get(0).get("id").asText();
+        String stateId = cityMasters.get(0).get("parentId").asText();
+        // A city belonging to a DIFFERENT state (not just a different city - several seeded
+        // cities share the same state, e.g. Mumbai/Pune/Nagpur all under Maharashtra) so the
+        // "other" lead below definitely does not match either the cityId or stateId filter.
+        String otherCityId = null;
+        for (JsonNode candidate : cityMasters) {
+            if (!candidate.get("parentId").asText().equals(stateId)) {
+                otherCityId = candidate.get("id").asText();
+                break;
+            }
+        }
+        assertThat(otherCityId).as("expected at least two seeded cities across different states").isNotNull();
+        String productId = firstMasterId(admin.accessToken(), MasterType.PRODUCT);
+
+        Map<String, Object> matchingBody = minimalLeadBody(masters, "Filter Match Co", "Contact", "9777777780");
+        matchingBody.put("cityId", cityId);
+        matchingBody.put("stateId", stateId);
+        matchingBody.put("productIds", java.util.List.of(productId));
+        ResponseEntity<String> matchingCreated = post("/leads", admin.accessToken(), matchingBody);
+        assertThat(matchingCreated.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        Map<String, Object> otherBody = minimalLeadBody(masters, "Filter No Match Co", "Contact", "9777777781");
+        otherBody.put("cityId", otherCityId);
+        ResponseEntity<String> otherCreated = post("/leads", admin.accessToken(), otherBody);
+        assertThat(otherCreated.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        assertThat(countLeads(admin.accessToken(), "cityId=" + cityId)).isEqualTo(1);
+        assertThat(countLeads(admin.accessToken(), "stateId=" + stateId)).isEqualTo(1);
+        assertThat(countLeads(admin.accessToken(), "productId=" + productId)).isEqualTo(1);
+
+        String today = LocalDate.now().toString();
+        String tomorrow = LocalDate.now().plusDays(1).toString();
+        assertThat(countLeads(admin.accessToken(), "dateFrom=" + today + "&dateTo=" + today)).isEqualTo(2);
+        assertThat(countLeads(admin.accessToken(), "dateFrom=" + tomorrow)).isEqualTo(0);
+    }
+
     // ---- helpers ----
 
     private record Masters(String cityId, String leadSourceId, String industryId) {
@@ -467,6 +514,12 @@ class LeadCrudIT extends AbstractIntegrationTest {
             ids.add(node.get("id").asText());
         }
         return ids;
+    }
+
+    private int countLeads(String token, String queryString) {
+        ResponseEntity<String> response = get("/leads?" + queryString, token);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return parse(response.getBody()).get("content").size();
     }
 
     private Masters loadMasters(String adminToken) {

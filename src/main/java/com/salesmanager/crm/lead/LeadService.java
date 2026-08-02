@@ -348,7 +348,11 @@ public class LeadService {
         Specification<Lead> spec = Specification
                 .where(LeadSpecifications.hasStatus(filter.status()))
                 .and(LeadSpecifications.hasInterestLevel(filter.interestLevelId()))
-                .and(LeadSpecifications.matchesSearch(filter.search()));
+                .and(LeadSpecifications.matchesSearch(filter.search()))
+                .and(LeadSpecifications.hasState(filter.stateId()))
+                .and(LeadSpecifications.hasCity(filter.cityId()))
+                .and(LeadSpecifications.hasProduct(filter.productId()))
+                .and(LeadSpecifications.createdBetween(filter.dateFrom(), filter.dateTo()));
 
         if (principal.getRole() == Role.EMPLOYEE) {
             // TEAM_VISIBILITY (see EmployeeHierarchyService#getTeamVisibilityScope): empty

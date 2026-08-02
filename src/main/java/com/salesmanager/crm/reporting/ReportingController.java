@@ -1,9 +1,11 @@
 package com.salesmanager.crm.reporting;
 
 import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
+import com.salesmanager.crm.reporting.dto.InterestLevelStatusMatrixResponse;
 import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
 import com.salesmanager.crm.reporting.dto.RevenueResponse;
+import com.salesmanager.crm.reporting.dto.VisitsByTypeResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import java.time.LocalDate;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -56,5 +58,17 @@ public class ReportingController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo) {
         return reportingService.revenue(dateFrom, dateTo);
+    }
+
+    @GetMapping("/visits-by-type")
+    public VisitsByTypeResponse visitsByType(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo) {
+        return reportingService.visitsByType(dateFrom, dateTo);
+    }
+
+    @GetMapping("/interest-level-status-matrix")
+    public InterestLevelStatusMatrixResponse interestLevelStatusMatrix() {
+        return reportingService.interestLevelStatusMatrix();
     }
 }

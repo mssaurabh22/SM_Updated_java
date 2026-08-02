@@ -80,4 +80,25 @@ public interface VisitRepository extends JpaRepository<Visit, UUID>, JpaSpecific
             + "GROUP BY v.status")
     List<VisitStatusCount> countGroupedByStatusForLeadIds(@Param("leadIds") Set<UUID> leadIds,
             @Param("dateFrom") LocalDate dateFrom, @Param("dateTo") LocalDate dateTo);
+
+    /**
+     * Backs ReportingService#visitsByType (Reports' "Visits by Type" chart - Field vs
+     * Telephonic) - same COALESCE-bound date-range rationale and JPQL-for-tenantFilter
+     * reasoning as {@link #countGroupedByStatus(LocalDate, LocalDate)}.
+     */
+    @Query("SELECT v.visitType AS visitType, COUNT(v) AS count FROM Visit v "
+            + "WHERE v.visitDate >= COALESCE(:dateFrom, v.visitDate) "
+            + "AND v.visitDate <= COALESCE(:dateTo, v.visitDate) "
+            + "GROUP BY v.visitType")
+    List<VisitTypeCount> countGroupedByVisitType(@Param("dateFrom") LocalDate dateFrom, @Param("dateTo") LocalDate dateTo);
+
+    /** Team-visibility counterpart to {@link #countGroupedByVisitType(LocalDate, LocalDate)},
+     * same shape as {@link #countGroupedByStatusForLeadIds(Set, LocalDate, LocalDate)}. */
+    @Query("SELECT v.visitType AS visitType, COUNT(v) AS count FROM Visit v "
+            + "WHERE v.leadId IN :leadIds "
+            + "AND v.visitDate >= COALESCE(:dateFrom, v.visitDate) "
+            + "AND v.visitDate <= COALESCE(:dateTo, v.visitDate) "
+            + "GROUP BY v.visitType")
+    List<VisitTypeCount> countGroupedByVisitTypeForLeadIds(@Param("leadIds") Set<UUID> leadIds,
+            @Param("dateFrom") LocalDate dateFrom, @Param("dateTo") LocalDate dateTo);
 }

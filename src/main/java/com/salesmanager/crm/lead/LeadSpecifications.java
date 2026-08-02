@@ -1,6 +1,8 @@
 package com.salesmanager.crm.lead;
 
 import jakarta.persistence.criteria.Predicate;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.jpa.domain.Specification;
@@ -34,6 +36,43 @@ final class LeadSpecifications {
     static Specification<Lead> hasInterestLevel(UUID interestLevelId) {
         return (root, query, cb) ->
                 interestLevelId == null ? null : cb.equal(root.get("interestLevelId"), interestLevelId);
+    }
+
+    static Specification<Lead> hasState(UUID stateId) {
+        return (root, query, cb) -> stateId == null ? null : cb.equal(root.get("stateId"), stateId);
+    }
+
+    static Specification<Lead> hasCity(UUID cityId) {
+        return (root, query, cb) -> cityId == null ? null : cb.equal(root.get("cityId"), cityId);
+    }
+
+    /** productIds is a Lead-owned @ElementCollection (lead_products join table) - cb.isMember
+     * is the standard JPA Criteria idiom for "this element-collection contains X", equivalent
+     * to an EXISTS-against-the-join-table subquery. */
+    static Specification<Lead> hasProduct(UUID productId) {
+        return (root, query, cb) ->
+                productId == null ? null : cb.isMember(productId, root.get("productIds"));
+    }
+
+    /** Filters on createdAt (an OffsetDateTime), given inclusive LocalDate bounds - dateTo is
+     * treated as through-end-of-that-day (a strict "less than the start of the following day"
+     * upper bound), not just midnight, so a lead created any time ON dateTo is included. Both
+     * bounds are independently optional, same "either side may be null" convention as
+     * VisitRepository's COALESCE-based date-range queries elsewhere in this codebase. */
+    static Specification<Lead> createdBetween(LocalDate dateFrom, LocalDate dateTo) {
+        return (root, query, cb) -> {
+            Predicate fromPredicate = dateFrom == null ? null
+                    : cb.greaterThanOrEqualTo(root.get("createdAt"), dateFrom.atStartOfDay(ZoneOffset.UTC).toOffsetDateTime());
+            Predicate toPredicate = dateTo == null ? null
+                    : cb.lessThan(root.get("createdAt"), dateTo.plusDays(1).atStartOfDay(ZoneOffset.UTC).toOffsetDateTime());
+            if (fromPredicate == null) {
+                return toPredicate;
+            }
+            if (toPredicate == null) {
+                return fromPredicate;
+            }
+            return cb.and(fromPredicate, toPredicate);
+        };
     }
 
     /** Case-insensitive substring match across companyName/contactPerson/contactNo/email - for

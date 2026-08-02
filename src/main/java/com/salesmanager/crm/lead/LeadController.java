@@ -7,10 +7,12 @@ import com.salesmanager.crm.lead.dto.LeadResponse;
 import com.salesmanager.crm.lead.dto.LeadStatusUpdateRequest;
 import com.salesmanager.crm.lead.dto.LeadUpdateRequest;
 import jakarta.validation.Valid;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,8 +48,14 @@ public class LeadController {
                                     @RequestParam(required = false) UUID ownerId,
                                     @RequestParam(required = false) UUID interestLevelId,
                                     @RequestParam(required = false) String search,
+                                    @RequestParam(required = false) UUID stateId,
+                                    @RequestParam(required = false) UUID cityId,
+                                    @RequestParam(required = false) UUID productId,
+                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
                                     Pageable pageable) {
-        LeadFilter filter = new LeadFilter(status, ownerId, interestLevelId, search);
+        LeadFilter filter = new LeadFilter(status, ownerId, interestLevelId, search,
+                stateId, cityId, productId, dateFrom, dateTo);
         return leadService.list(filter, pageable).map(LeadResponse::from);
     }
 

@@ -86,4 +86,20 @@ public interface LeadRepository extends JpaRepository<Lead, UUID>, JpaSpecificat
     @Query("SELECT l.leadSourceId AS leadSourceId, COUNT(l) AS count FROM Lead l "
             + "WHERE l.ownerId IN :ownerIds GROUP BY l.leadSourceId")
     List<LeadSourceCount> countGroupedByLeadSourceForOwners(@Param("ownerIds") Set<UUID> ownerIds);
+
+    /**
+     * Backs ReportingService#interestLevelStatusMatrix (Reports' "Interest Level x Status"
+     * matrix, e.g. "how many Hot leads are stuck in Contacted") - one GROUP BY across both axes
+     * in a single round trip, same shape as {@link #countGroupedByStatus()}. interestLevelId is
+     * nullable; ReportingService resolves ids to labels and buckets null into "Not Set".
+     */
+    @Query("SELECT l.interestLevelId AS interestLevelId, l.status AS status, COUNT(l) AS count FROM Lead l "
+            + "GROUP BY l.interestLevelId, l.status")
+    List<LeadInterestStatusCount> countGroupedByInterestLevelAndStatus();
+
+    /** Team-visibility counterpart to {@link #countGroupedByInterestLevelAndStatus()}, same
+     * shape as {@link #countGroupedByStatusForOwners(Set)}. */
+    @Query("SELECT l.interestLevelId AS interestLevelId, l.status AS status, COUNT(l) AS count FROM Lead l "
+            + "WHERE l.ownerId IN :ownerIds GROUP BY l.interestLevelId, l.status")
+    List<LeadInterestStatusCount> countGroupedByInterestLevelAndStatusForOwners(@Param("ownerIds") Set<UUID> ownerIds);
 }
