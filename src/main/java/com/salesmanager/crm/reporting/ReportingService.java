@@ -1,5 +1,7 @@
 package com.salesmanager.crm.reporting;
 
+import com.salesmanager.crm.activity.ActivityLogRepository;
+import com.salesmanager.crm.activity.OwnerLastActivity;
 import com.salesmanager.crm.employee.Employee;
 import com.salesmanager.crm.employee.EmployeeHierarchyService;
 import com.salesmanager.crm.employee.EmployeeRepository;
@@ -10,6 +12,7 @@ import com.salesmanager.crm.invoicing.InvoiceRepository;
 import com.salesmanager.crm.lead.Lead;
 import com.salesmanager.crm.lead.LeadInterestStatusCount;
 import com.salesmanager.crm.lead.LeadOwnerCount;
+import com.salesmanager.crm.lead.LeadOwnerStatusCount;
 import com.salesmanager.crm.lead.LeadRepository;
 import com.salesmanager.crm.lead.LeadSourceCount;
 import com.salesmanager.crm.lead.LeadStatus;
@@ -25,20 +28,26 @@ import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.OwnerBreakdown;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
 import com.salesmanager.crm.reporting.dto.RevenueResponse;
+import com.salesmanager.crm.reporting.dto.TeamMemberProgress;
+import com.salesmanager.crm.reporting.dto.TeamProgressResponse;
 import com.salesmanager.crm.reporting.dto.VisitsByTypeResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import com.salesmanager.crm.security.CurrentUser;
 import com.salesmanager.crm.security.UserPrincipal;
+import com.salesmanager.crm.visit.Visit;
 import com.salesmanager.crm.visit.VisitRepository;
+import com.salesmanager.crm.visit.VisitStatus;
 import com.salesmanager.crm.visit.VisitStatusCount;
 import com.salesmanager.crm.visit.VisitType;
 import com.salesmanager.crm.visit.VisitTypeCount;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,6 +83,7 @@ public class ReportingService {
     private final EmployeeHierarchyService employeeHierarchyService;
     private final MasterDataRepository masterDataRepository;
     private final InvoiceRepository invoiceRepository;
+    private final ActivityLogRepository activityLogRepository;
     private final EntitlementService entitlementService;
     private final CurrentUser currentUser;
 
@@ -82,6 +92,7 @@ public class ReportingService {
                              EmployeeHierarchyService employeeHierarchyService,
                              MasterDataRepository masterDataRepository,
                              InvoiceRepository invoiceRepository,
+                             ActivityLogRepository activityLogRepository,
                              EntitlementService entitlementService,
                              CurrentUser currentUser) {
         this.leadRepository = leadRepository;
@@ -90,6 +101,7 @@ public class ReportingService {
         this.employeeHierarchyService = employeeHierarchyService;
         this.masterDataRepository = masterDataRepository;
         this.invoiceRepository = invoiceRepository;
+        this.activityLogRepository = activityLogRepository;
         this.entitlementService = entitlementService;
         this.currentUser = currentUser;
     }
@@ -364,6 +376,108 @@ public class ReportingService {
                 ? invoiceRepository.sumGrandTotalBetween(effectiveFrom, effectiveTo)
                 : invoiceRepository.sumGrandTotalForOwnersBetween(ownerScope, effectiveFrom, effectiveTo);
         return new RevenueResponse(true, total);
+    }
+
+    /**
+     * Read-only per-team-member rollup (GET /reports/team-progress): each member's lead counts
+     * by status, visits due today/upcoming (next 7 days), and last activity timestamp - a
+     * manager's "who's doing what" view, read-only for now (no drill-down/edit actions here).
+     * Sorted by employeeName. An org/manager with zero visible team members (a fresh org, or an
+     * IC manager with no reports at all) gets an empty list, not an error - only the "not
+     * permitted to see anyone's team at all" case 403s, via {@link #resolveTeamMemberIds()}.
+     */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public TeamProgressResponse teamProgress() {
+        Set<UUID> memberIds = resolveTeamMemberIds();
+        if (memberIds.isEmpty()) {
+            return new TeamProgressResponse(List.of());
+        }
+
+        Map<UUID, Employee> employeesById = employeeRepository.findAllById(memberIds).stream()
+                .collect(Collectors.toMap(Employee::getId, e -> e));
+
+        Map<UUID, Map<LeadStatus, Long>> leadCountsByOwner = new HashMap<>();
+        for (UUID id : memberIds) {
+            leadCountsByOwner.put(id, emptyStatusMap());
+        }
+        for (LeadOwnerStatusCount row : leadRepository.countGroupedByOwnerAndStatusForOwners(memberIds)) {
+            leadCountsByOwner.computeIfAbsent(row.getOwnerId(), k -> emptyStatusMap())
+                    .put(row.getStatus(), row.getCount());
+        }
+
+        // leadId -> ownerId, scoped to the team - needed to attribute each Visit (which has no
+        // ownerId of its own, see Visit's own javadoc) back to the right team member.
+        Map<UUID, UUID> ownerIdByLeadId = leadRepository.findByOwnerIdIn(memberIds).stream()
+                .collect(Collectors.toMap(Lead::getId, Lead::getOwnerId));
+        Set<UUID> leadIds = ownerIdByLeadId.keySet();
+
+        Map<UUID, Long> visitsDueTodayByOwner = new HashMap<>();
+        Map<UUID, Long> visitsUpcomingByOwner = new HashMap<>();
+        if (!leadIds.isEmpty()) {
+            LocalDate today = LocalDate.now();
+            for (Visit visit : visitRepository.findByLeadIdInAndStatusAndVisitDateLessThanEqual(
+                    leadIds, VisitStatus.PLANNED, today)) {
+                UUID ownerId = ownerIdByLeadId.get(visit.getLeadId());
+                if (ownerId != null) {
+                    visitsDueTodayByOwner.merge(ownerId, 1L, Long::sum);
+                }
+            }
+            for (Visit visit : visitRepository.findByLeadIdInAndStatusAndVisitDateBetween(
+                    leadIds, VisitStatus.PLANNED, today.plusDays(1), today.plusDays(7))) {
+                UUID ownerId = ownerIdByLeadId.get(visit.getLeadId());
+                if (ownerId != null) {
+                    visitsUpcomingByOwner.merge(ownerId, 1L, Long::sum);
+                }
+            }
+        }
+
+        Map<UUID, OffsetDateTime> lastActivityByOwner = activityLogRepository.findLastActivityForOwners(memberIds)
+                .stream()
+                .collect(Collectors.toMap(OwnerLastActivity::getOwnerId, OwnerLastActivity::getLastActivityAt));
+
+        List<TeamMemberProgress> members = memberIds.stream()
+                .map(id -> {
+                    Employee employee = employeesById.get(id);
+                    Map<LeadStatus, Long> byStatus = leadCountsByOwner.getOrDefault(id, emptyStatusMap());
+                    long totalLeads = byStatus.values().stream().mapToLong(Long::longValue).sum();
+                    return new TeamMemberProgress(
+                            id,
+                            employee != null ? employee.getFullName() : "Unknown",
+                            byStatus,
+                            totalLeads,
+                            visitsDueTodayByOwner.getOrDefault(id, 0L),
+                            visitsUpcomingByOwner.getOrDefault(id, 0L),
+                            lastActivityByOwner.get(id));
+                })
+                .sorted(Comparator.comparing(TeamMemberProgress::employeeName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+
+        return new TeamProgressResponse(members);
+    }
+
+    /**
+     * Who counts as "my team" for {@link #teamProgress()}: for an ADMIN, every other active
+     * employee in the org (an Admin oversees everyone); for an EMPLOYEE, the same
+     * TEAM_VISIBILITY-gated subordinate chain as {@link #resolveOwnerScope()} - but unlike that
+     * method, self is deliberately NOT added here, since this view lists individual team
+     * members, not an aggregate that should include the manager's own numbers. A manager with
+     * no reports (or an org without TEAM_VISIBILITY) gets the same 403 every other
+     * team-scoped reporting endpoint already gives them.
+     */
+    private Set<UUID> resolveTeamMemberIds() {
+        UserPrincipal principal = currentUser.get();
+        if (principal.getRole() != Role.EMPLOYEE) {
+            return employeeRepository.findByActive(true).stream()
+                    .map(Employee::getId)
+                    .filter(id -> !id.equals(principal.getEmployeeId()))
+                    .collect(Collectors.toSet());
+        }
+        Set<UUID> subordinateIds = employeeHierarchyService
+                .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId());
+        if (subordinateIds.isEmpty()) {
+            throw new AccessDeniedException("Team progress is limited to Admins and managers with team visibility");
+        }
+        return subordinateIds;
     }
 
     /**

@@ -71,6 +71,15 @@ public interface LeadRepository extends JpaRepository<Lead, UUID>, JpaSpecificat
     List<LeadStatusCount> countGroupedByStatusForOwners(@Param("ownerIds") Set<UUID> ownerIds);
 
     /**
+     * Backs ReportingService#teamProgress (Team Progress view) - per-team-member lead status
+     * breakdown, i.e. {@link #countGroupedByStatusForOwners(Set)} but keyed by ownerId too
+     * instead of collapsing every owner into one combined total.
+     */
+    @Query("SELECT l.ownerId AS ownerId, l.status AS status, COUNT(l) AS count FROM Lead l "
+            + "WHERE l.ownerId IN :ownerIds GROUP BY l.ownerId, l.status")
+    List<LeadOwnerStatusCount> countGroupedByOwnerAndStatusForOwners(@Param("ownerIds") Set<UUID> ownerIds);
+
+    /**
      * Backs ReportingService#leadsBySource (Dashboard's "Leads by Source" chart) - same
      * GROUP BY-in-one-round-trip shape as {@link #countGroupedByStatus()}. leadSourceId is
      * nullable, and Lead's own javadoc already establishes it's a raw id into master_data, not

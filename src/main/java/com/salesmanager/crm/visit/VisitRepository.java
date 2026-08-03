@@ -44,6 +44,21 @@ public interface VisitRepository extends JpaRepository<Visit, UUID>, JpaSpecific
     List<Visit> findByLeadIdAndVisitDate(UUID leadId, LocalDate visitDate);
 
     /**
+     * Backs ReportingService#teamProgress's "due today" count per team member - same
+     * "today-or-earlier" semantics as {@link #findByVisitDateLessThanEqualAndStatus}, restricted
+     * to a manager's team scope (via the leadIds owned by that team, resolved by the caller)
+     * instead of the whole tenant.
+     */
+    List<Visit> findByLeadIdInAndStatusAndVisitDateLessThanEqual(Set<UUID> leadIds, VisitStatus status, LocalDate date);
+
+    /**
+     * Backs ReportingService#teamProgress's "upcoming" count per team member (the same
+     * tomorrow-through-+7-days window the Dashboard/TodaysFollowUpsPage upcoming-visits widgets
+     * already use on the frontend) - restricted to a manager's team scope.
+     */
+    List<Visit> findByLeadIdInAndStatusAndVisitDateBetween(Set<UUID> leadIds, VisitStatus status, LocalDate from, LocalDate to);
+
+    /**
      * Backs ReportingService#visitsCompletedVsMissed - one GROUP BY query for the whole
      * COMPLETED/MISSED/PLANNED breakdown, optionally restricted to an inclusive visitDate
      * range. Either bound may be null (covers "all visits" on that side of the range) - each

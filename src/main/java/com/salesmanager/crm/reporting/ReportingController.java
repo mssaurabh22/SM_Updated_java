@@ -5,6 +5,7 @@ import com.salesmanager.crm.reporting.dto.InterestLevelStatusMatrixResponse;
 import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
 import com.salesmanager.crm.reporting.dto.RevenueResponse;
+import com.salesmanager.crm.reporting.dto.TeamProgressResponse;
 import com.salesmanager.crm.reporting.dto.VisitsByTypeResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import java.time.LocalDate;
@@ -70,5 +71,10 @@ public class ReportingController {
     @GetMapping("/interest-level-status-matrix")
     public InterestLevelStatusMatrixResponse interestLevelStatusMatrix() {
         return reportingService.interestLevelStatusMatrix();
+    }
+
+    @GetMapping("/team-progress")
+    public TeamProgressResponse teamProgress() {
+        return reportingService.teamProgress();
     }
 }
