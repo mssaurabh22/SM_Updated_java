@@ -31,9 +31,11 @@ public class ThemeService {
     static final String DEFAULT_PRIMARY_COLOR = "#1565c0";
     static final String DEFAULT_MODE = "LIGHT";
     static final String DEFAULT_DENSITY = "COMFORTABLE";
+    static final String DEFAULT_UI_STYLE = "STANDARD";
 
     private static final Set<String> VALID_MODES = Set.of("LIGHT", "DARK");
     private static final Set<String> VALID_DENSITIES = Set.of("COMFORTABLE", "COMPACT");
+    private static final Set<String> VALID_UI_STYLES = Set.of("STANDARD", "MINIMALIST");
 
     private final OrganizationRepository organizationRepository;
     private final EmployeeRepository employeeRepository;
@@ -57,7 +59,8 @@ public class ThemeService {
         return new ThemeSettings(
                 stored.primaryColor() != null ? stored.primaryColor() : DEFAULT_PRIMARY_COLOR,
                 stored.mode() != null ? stored.mode() : DEFAULT_MODE,
-                stored.density() != null ? stored.density() : DEFAULT_DENSITY);
+                stored.density() != null ? stored.density() : DEFAULT_DENSITY,
+                stored.uiStyle() != null ? stored.uiStyle() : DEFAULT_UI_STYLE);
     }
 
     // noRollbackFor is essential, not cosmetic - see MasterDataService's identical comment:
@@ -102,6 +105,9 @@ public class ThemeService {
         if (request.density() != null && !VALID_DENSITIES.contains(request.density())) {
             throw new InvalidThemeException("density", "density must be one of " + VALID_DENSITIES);
         }
+        if (request.uiStyle() != null && !VALID_UI_STYLES.contains(request.uiStyle())) {
+            throw new InvalidThemeException("uiStyle", "uiStyle must be one of " + VALID_UI_STYLES);
+        }
     }
 
     /** Partial update: any field left null on the incoming request keeps its existing value. */
@@ -109,12 +115,13 @@ public class ThemeService {
         return new ThemeSettings(
                 incoming.primaryColor() != null ? incoming.primaryColor() : existing.primaryColor(),
                 incoming.mode() != null ? incoming.mode() : existing.mode(),
-                incoming.density() != null ? incoming.density() : existing.density());
+                incoming.density() != null ? incoming.density() : existing.density(),
+                incoming.uiStyle() != null ? incoming.uiStyle() : existing.uiStyle());
     }
 
     private ThemeSettings parse(String rawJson) {
         if (rawJson == null || rawJson.isBlank()) {
-            return new ThemeSettings(null, null, null);
+            return new ThemeSettings(null, null, null, null);
         }
         try {
             return objectMapper.readValue(rawJson, ThemeSettings.class);

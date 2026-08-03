@@ -39,6 +39,7 @@ class ThemeSettingsIT extends AbstractIntegrationTest {
         assertThat(body.get("primaryColor").asText()).isEqualTo("#1565c0");
         assertThat(body.get("mode").asText()).isEqualTo("LIGHT");
         assertThat(body.get("density").asText()).isEqualTo("COMFORTABLE");
+        assertThat(body.get("uiStyle").asText()).isEqualTo("STANDARD");
     }
 
     @Test
@@ -118,6 +119,42 @@ class ThemeSettingsIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void invalidUiStyle_isRejectedWithBadRequestAndFieldError() {
+        AuthResponse admin = registerOrganization("Invalid UI Style Org");
+
+        ResponseEntity<String> response = put("/organizations/me/theme", admin.accessToken(),
+                Map.of("uiStyle", "FANCY"));
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        JsonNode body = parse(response.getBody());
+        assertThat(body.get("fieldErrors").get(0).get("field").asText()).isEqualTo("uiStyle");
+    }
+
+    @Test
+    void admin_canSetUiStyleToMinimalist_andItRoundTrips() {
+        AuthResponse admin = registerOrganization("Minimalist UI Org");
+
+        ResponseEntity<String> putResponse = put("/organizations/me/theme", admin.accessToken(),
+                Map.of("uiStyle", "MINIMALIST"));
+        assertThat(putResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(parse(putResponse.getBody()).get("uiStyle").asText()).isEqualTo("MINIMALIST");
+
+        JsonNode getBody = parse(get("/organizations/me/theme", admin.accessToken()).getBody());
+        assertThat(getBody.get("uiStyle").asText()).isEqualTo("MINIMALIST");
+        // Setting uiStyle must not disturb the other, already-defaulted fields.
+        assertThat(getBody.get("primaryColor").asText()).isEqualTo("#1565c0");
+        assertThat(getBody.get("mode").asText()).isEqualTo("LIGHT");
+        assertThat(getBody.get("density").asText()).isEqualTo("COMFORTABLE");
+
+        AuthResponse employee = createAndLoginEmployee(admin.accessToken(), "minimalistpref");
+        ResponseEntity<String> prefPut = put("/employees/me/theme-preference", employee.accessToken(),
+                Map.of("uiStyle", "MINIMALIST"));
+        assertThat(prefPut.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode prefBody = parse(get("/employees/me/theme-preference", employee.accessToken()).getBody());
+        assertThat(prefBody.get("uiStyle").asText()).isEqualTo("MINIMALIST");
+        assertThat(prefBody.get("mode").isNull()).isTrue();
+    }
+
+    @Test
     void employeeWithNoPreference_getMyThemePreference_returnsAllNullFields_notAnError() {
         AuthResponse admin = registerOrganization("No Preference Org");
         AuthResponse employee = createAndLoginEmployee(admin.accessToken(), "nopref");
@@ -128,6 +165,7 @@ class ThemeSettingsIT extends AbstractIntegrationTest {
         assertThat(body.get("primaryColor").isNull()).isTrue();
         assertThat(body.get("mode").isNull()).isTrue();
         assertThat(body.get("density").isNull()).isTrue();
+        assertThat(body.get("uiStyle").isNull()).isTrue();
     }
 
     @Test
@@ -171,6 +209,7 @@ class ThemeSettingsIT extends AbstractIntegrationTest {
         assertThat(orgATheme.get("primaryColor").asText()).isEqualTo("#1565c0");
         assertThat(orgATheme.get("mode").asText()).isEqualTo("LIGHT");
         assertThat(orgATheme.get("density").asText()).isEqualTo("COMFORTABLE");
+        assertThat(orgATheme.get("uiStyle").asText()).isEqualTo("STANDARD");
 
         JsonNode orgBTheme = parse(get("/organizations/me/theme", orgB.accessToken()).getBody());
         assertThat(orgBTheme.get("primaryColor").asText()).isEqualTo("#123456");

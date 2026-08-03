@@ -12,15 +12,17 @@ import jakarta.validation.constraints.Pattern;
  * see ThemeService#getMyThemePreference's javadoc) and the JSON stored in the jsonb columns,
  * so plain Jackson defaults (include nulls) keep both uses consistent.
  *
- * {@code mode}/{@code density} are plain Strings (not Java enums) rather than a JPA/Jackson
- * enum mapping, since this same record is reused for the org's fully-defaulted response and
- * the employee's genuinely-nullable one - ThemeService#validate is the single place that
- * enforces the allowed values (LIGHT/DARK, COMFORTABLE/COMPACT), returning the same
- * ErrorResponse.FieldErrorDetail shape as Bean Validation failures via InvalidThemeException.
+ * {@code mode}/{@code density}/{@code uiStyle} are plain Strings (not Java enums) rather than
+ * a JPA/Jackson enum mapping, since this same record is reused for the org's fully-defaulted
+ * response and the employee's genuinely-nullable one - ThemeService#validate is the single
+ * place that enforces the allowed values (LIGHT/DARK, COMFORTABLE/COMPACT,
+ * STANDARD/MINIMALIST), returning the same ErrorResponse.FieldErrorDetail shape as Bean
+ * Validation failures via InvalidThemeException.
  */
 public record ThemeSettings(
         @Pattern(regexp = "^#[0-9A-Fa-f]{6}$", message = "primaryColor must be a hex color like #1565c0")
         String primaryColor,
         String mode,
-        String density) {
+        String density,
+        String uiStyle) {
 }
