@@ -44,7 +44,9 @@ class LeadCrudIT extends AbstractIntegrationTest {
         assertThat(created.get("companyName").asText()).isEqualTo("Acme Corp");
         assertThat(created.get("contactPerson").asText()).isEqualTo("Jane Buyer");
         assertThat(created.get("contactNo").asText()).isEqualTo("9876543210");
-        assertThat(created.get("status").asText()).isEqualTo("NEW");
+        // No interestLevelId supplied (not Hot) - a new lead defaults to INTERESTED, not NEW,
+        // per LeadService#create's Hot-gating (see LeadInterestedStatusIT for the Hot case).
+        assertThat(created.get("status").asText()).isEqualTo("INTERESTED");
         assertThat(created.get("ownerId").asText()).isEqualTo(admin.employeeId().toString());
         assertThat(created.get("createdBy").asText()).isEqualTo(admin.employeeId().toString());
         assertThat(created.get("id").asText()).isNotBlank();
@@ -266,13 +268,87 @@ class LeadCrudIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void lostWorkflow_reassignsLeadFromEmployeeOwnerToOrgAdmin() {
+        AuthResponse admin = registerOrganization("Lead Lost Reassign Org");
+        AuthResponse owner = createAndLoginEmployee(admin.accessToken(), "lostOwner");
+        Masters masters = loadMasters(admin.accessToken());
+        String lostReasonId = firstMasterId(admin.accessToken(), MasterType.LOST_REASON);
+
+        Map<String, Object> body = minimalLeadBody(masters, "Lost Reassign Co", "Contact Lost Reassign", "9333333330");
+        ResponseEntity<String> created = post("/leads", owner.accessToken(), body);
+        String leadId = parse(created.getBody()).get("id").asText();
+        assertThat(parse(created.getBody()).get("ownerId").asText()).isEqualTo(owner.employeeId().toString());
+
+        ResponseEntity<String> lostResponse = patch("/leads/" + leadId + "/status", owner.accessToken(),
+                Map.of("status", "LOST", "lostReasonId", lostReasonId));
+        assertThat(lostResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode lostBody = parse(lostResponse.getBody());
+        assertThat(lostBody.get("status").asText()).isEqualTo("LOST");
+        // Unassigned from the employee and handed back to the org's single Admin, so it
+        // re-enters the reassignable pool (see LeadService#updateStatus).
+        assertThat(lostBody.get("ownerId").asText()).isEqualTo(admin.employeeId().toString());
+
+        // The (former) owner should no longer see this lead in their own owner-scoped list.
+        JsonNode ownerList = getLeadsList(owner.accessToken());
+        assertThat(ownerList.get("content").size()).isEqualTo(0);
+    }
+
+    /**
+     * A lead's Interest Level gates which statuses are reachable: not-Hot locks it to
+     * INTERESTED (LOST remains reachable regardless), and switching Interest Level to Hot
+     * unlocks the full pipeline - see LeadService#isHotInterestLevel/updateStatus.
+     */
+    @Test
+    void interestLevelGating_lockedToInterestedUnlessHot_lostAlwaysReachable() {
+        AuthResponse admin = registerOrganization("Lead Interest Gating Org");
+        Masters masters = loadMasters(admin.accessToken());
+        String hotInterestLevelId = interestLevelIdByCode(admin.accessToken(), "HOT");
+        String warmInterestLevelId = interestLevelIdByCode(admin.accessToken(), "WARM");
+        String lostReasonId = firstMasterId(admin.accessToken(), MasterType.LOST_REASON);
+
+        // No interest level set at all (not Hot) -> defaults to INTERESTED, not NEW.
+        Map<String, Object> body = minimalLeadBody(masters, "Gating Co", "Gating Contact", "9333333331");
+        ResponseEntity<String> created = post("/leads", admin.accessToken(), body);
+        String leadId = parse(created.getBody()).get("id").asText();
+        assertThat(parse(created.getBody()).get("status").asText()).isEqualTo("INTERESTED");
+
+        // Still not Hot (Warm) - CONTACTED is rejected as a conflict.
+        ResponseEntity<String> updateWarm = put("/leads/" + leadId, admin.accessToken(),
+                Map.of("interestLevelId", warmInterestLevelId));
+        assertThat(updateWarm.getStatusCode()).isEqualTo(HttpStatus.OK);
+        ResponseEntity<String> rejectedContacted = patch("/leads/" + leadId + "/status", admin.accessToken(),
+                Map.of("status", "CONTACTED"));
+        assertThat(rejectedContacted.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        // LOST is always reachable regardless of Interest Level.
+        ResponseEntity<String> lostResponse = patch("/leads/" + leadId + "/status", admin.accessToken(),
+                Map.of("status", "LOST", "lostReasonId", lostReasonId));
+        assertThat(lostResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // A second lead, switched to Hot, unlocks the full pipeline.
+        Map<String, Object> hotBody = minimalLeadBody(masters, "Gating Hot Co", "Gating Hot Contact", "9333333332");
+        String hotLeadId = parse(post("/leads", admin.accessToken(), hotBody).getBody()).get("id").asText();
+        ResponseEntity<String> updateHot = put("/leads/" + hotLeadId, admin.accessToken(),
+                Map.of("interestLevelId", hotInterestLevelId));
+        assertThat(updateHot.getStatusCode()).isEqualTo(HttpStatus.OK);
+        ResponseEntity<String> acceptedContacted = patch("/leads/" + hotLeadId + "/status", admin.accessToken(),
+                Map.of("status", "CONTACTED"));
+        assertThat(acceptedContacted.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(parse(acceptedContacted.getBody()).get("status").asText()).isEqualTo("CONTACTED");
+    }
+
+    @Test
     void nonLostStatusUpdate_doesNotRequireOrTouchLostReasonOrInterestLevel() {
         AuthResponse admin = registerOrganization("Lead Status Update Org");
         Masters masters = loadMasters(admin.accessToken());
+        String hotInterestLevelId = interestLevelIdByCode(admin.accessToken(), "HOT");
 
         Map<String, Object> body = minimalLeadBody(masters, "Contacted Co", "Contact Person", "9555555555");
         ResponseEntity<String> created = post("/leads", admin.accessToken(), body);
         String leadId = parse(created.getBody()).get("id").asText();
+        // CONTACTED requires Interest Level Hot - see LeadService#updateStatus's gating.
+        assertThat(put("/leads/" + leadId, admin.accessToken(),
+                Map.of("interestLevelId", hotInterestLevelId)).getStatusCode()).isEqualTo(HttpStatus.OK);
 
         ResponseEntity<String> response = patch("/leads/" + leadId + "/status", admin.accessToken(),
                 Map.of("status", "CONTACTED"));

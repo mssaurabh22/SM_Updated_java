@@ -91,6 +91,16 @@ class ActivityLogIT extends AbstractIntegrationTest {
         String leadId = createLead(admin.accessToken(), masters, "Activity Status Co", "Contact AS",
                 "9500000002", false);
 
+        // CONTACTED (and every non-INTERESTED/non-LOST status) requires Interest Level Hot -
+        // see LeadService#updateStatus's gating. The lead has no interest level set at
+        // creation (so it starts INTERESTED, not NEW - see LeadCrudIT), so set it Hot first to
+        // unlock the normal pipeline and reach the INTERESTED -> CONTACTED transition this test
+        // is about.
+        String hotInterestLevelId = firstMasterId(admin.accessToken(), MasterType.INTEREST_LEVEL);
+        ResponseEntity<String> hotUpdate = put("/leads/" + leadId, admin.accessToken(),
+                Map.of("interestLevelId", hotInterestLevelId));
+        assertThat(hotUpdate.getStatusCode()).isEqualTo(HttpStatus.OK);
+
         ResponseEntity<String> statusResponse = patch("/leads/" + leadId + "/status", admin.accessToken(),
                 Map.of("status", "CONTACTED"));
         assertThat(statusResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -98,7 +108,7 @@ class ActivityLogIT extends AbstractIntegrationTest {
         JsonNode entries = activityContent(admin.accessToken(), "?leadId=" + leadId + "&type=LEAD_STATUS_CHANGED");
         assertThat(entries.size()).isEqualTo(1);
         JsonNode entry = entries.get(0);
-        assertThat(entry.get("description").asText()).contains("NEW").contains("CONTACTED");
+        assertThat(entry.get("description").asText()).contains("INTERESTED").contains("CONTACTED");
         assertThat(entry.get("actorId").asText()).isEqualTo(admin.employeeId().toString());
     }
 
@@ -210,6 +220,10 @@ class ActivityLogIT extends AbstractIntegrationTest {
         Masters masters = loadMasters(admin.accessToken());
         String leadId = createLead(admin.accessToken(), masters, "Activity Order Co", "Contact AO",
                 "9500000008", false);
+
+        // CONTACTED requires Interest Level Hot - see LeadService#updateStatus's gating.
+        String hotInterestLevelId = firstMasterId(admin.accessToken(), MasterType.INTEREST_LEVEL);
+        put("/leads/" + leadId, admin.accessToken(), Map.of("interestLevelId", hotInterestLevelId));
 
         patch("/leads/" + leadId + "/status", admin.accessToken(), Map.of("status", "CONTACTED"));
         patch("/leads/" + leadId + "/reassign", admin.accessToken(),
@@ -388,6 +402,13 @@ class ActivityLogIT extends AbstractIntegrationTest {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
         return restTemplate.exchange(baseUrl() + path, HttpMethod.PATCH, new HttpEntity<>(body, headers), String.class);
+    }
+
+    private ResponseEntity<String> put(String path, String token, Object body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        return restTemplate.exchange(baseUrl() + path, HttpMethod.PUT, new HttpEntity<>(body, headers), String.class);
     }
 
     private ResponseEntity<String> get(String path, String token) {

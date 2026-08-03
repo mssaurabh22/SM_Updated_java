@@ -65,27 +65,34 @@ class ReportingIT extends AbstractIntegrationTest {
         AuthResponse ownerB = createAndLoginEmployee(admin.accessToken(), "reportOwnerB");
         Masters masters = loadMasters(admin.accessToken());
         String lostReasonId = firstMasterId(admin.accessToken(), MasterType.LOST_REASON);
+        // Every non-INTERESTED/non-LOST status requires Interest Level Hot (see
+        // LeadService#updateStatus's gating) - leads below that need to reach NEW/CONTACTED/
+        // NEGOTIATION/CLOSED_WON/LAPSED are all created Hot up front.
+        String hotInterestLevelId = firstMasterId(admin.accessToken(), MasterType.INTEREST_LEVEL);
 
         // ---- Leads: 8 total, spread across every status and across 3 distinct owners ----
-        String lead1 = createLead(admin.accessToken(), masters, "Admin Lead 1", "Contact 1", "9000000001"); // NEW
-        String lead2 = createLead(admin.accessToken(), masters, "Admin Lead 2", "Contact 2", "9000000002"); // NEW
+        String lead1 = createLeadWithInterest(admin.accessToken(), masters, "Admin Lead 1", "9000000001", hotInterestLevelId); // NEW
+        String lead2 = createLeadWithInterest(admin.accessToken(), masters, "Admin Lead 2", "9000000002", hotInterestLevelId); // NEW
 
-        String lead3 = createLead(ownerA.accessToken(), masters, "Owner A Lead 1", "Contact 3", "9000000003");
+        String lead3 = createLeadWithInterest(ownerA.accessToken(), masters, "Owner A Lead 1", "9000000003", hotInterestLevelId);
         patchStatus(admin.accessToken(), lead3, "CONTACTED", null);
 
-        String lead4 = createLead(ownerA.accessToken(), masters, "Owner A Lead 2", "Contact 4", "9000000004");
+        String lead4 = createLeadWithInterest(ownerA.accessToken(), masters, "Owner A Lead 2", "9000000004", hotInterestLevelId);
         patchStatus(admin.accessToken(), lead4, "CLOSED_WON", null);
 
-        String lead5 = createLead(ownerA.accessToken(), masters, "Owner A Lead 3", "Contact 5", "9000000005");
+        String lead5 = createLeadWithInterest(ownerA.accessToken(), masters, "Owner A Lead 3", "9000000005", hotInterestLevelId);
         patchStatus(admin.accessToken(), lead5, "CLOSED_WON", null);
 
+        // Marking a lead LOST unassigns it from its owner and hands it back to the org's
+        // (single) Admin (see LeadService#updateStatus) - lead6 moves from ownerB to admin,
+        // which the byOwner assertions below account for.
         String lead6 = createLead(ownerB.accessToken(), masters, "Owner B Lead 1", "Contact 6", "9000000006");
         patchStatus(admin.accessToken(), lead6, "LOST", lostReasonId);
 
-        String lead7 = createLead(ownerB.accessToken(), masters, "Owner B Lead 2", "Contact 7", "9000000007");
+        String lead7 = createLeadWithInterest(ownerB.accessToken(), masters, "Owner B Lead 2", "9000000007", hotInterestLevelId);
         patchStatus(admin.accessToken(), lead7, "NEGOTIATION", null);
 
-        String lead8 = createLead(ownerB.accessToken(), masters, "Owner B Lead 3", "Contact 8", "9000000008");
+        String lead8 = createLeadWithInterest(ownerB.accessToken(), masters, "Owner B Lead 3", "9000000008", hotInterestLevelId);
         patchStatus(admin.accessToken(), lead8, "LAPSED", null);
 
         // ---- Visits: attached to lead1, spanning COMPLETED/MISSED/PLANNED across 5 dates ----
@@ -113,7 +120,10 @@ class ReportingIT extends AbstractIntegrationTest {
         assertThat(byStatus.get("LOST").asLong()).isEqualTo(1);
         assertThat(byStatus.get("CLOSED_WON").asLong()).isEqualTo(2);
         assertThat(byStatus.get("LAPSED").asLong()).isEqualTo(1);
-        assertThat(byStatus.size()).isEqualTo(6);
+        // Every LeadStatus value gets a zero-seeded bucket (see ReportingService), including
+        // INTERESTED (0 here - every seeded lead above is Hot or LOST).
+        assertThat(byStatus.get("INTERESTED").asLong()).isEqualTo(0);
+        assertThat(byStatus.size()).isEqualTo(7);
         assertThat(pipeline.get("totalLeads").asLong()).isEqualTo(8);
 
         JsonNode byOwner = pipeline.get("byOwner");
@@ -122,8 +132,11 @@ class ReportingIT extends AbstractIntegrationTest {
         for (JsonNode owner : byOwner) {
             ownerById.put(owner.get("ownerId").asText(), owner);
         }
+        // admin owns its original 2 leads PLUS lead6, auto-reassigned to them when it was
+        // marked Lost (see LeadService#updateStatus - every org has a single Admin, which is
+        // exactly who a Lost lead is handed back to).
         JsonNode adminOwner = ownerById.get(admin.employeeId().toString());
-        assertThat(adminOwner.get("leadCount").asLong()).isEqualTo(2);
+        assertThat(adminOwner.get("leadCount").asLong()).isEqualTo(3);
         assertThat(adminOwner.get("closedWonCount").asLong()).isEqualTo(0);
         assertThat(adminOwner.get("ownerName").asText()).isEqualTo("Report Admin");
 
@@ -132,8 +145,9 @@ class ReportingIT extends AbstractIntegrationTest {
         assertThat(ownerAEntry.get("closedWonCount").asLong()).isEqualTo(2);
         assertThat(ownerAEntry.get("ownerName").asText()).isEqualTo("Test Employee reportOwnerA");
 
+        // ownerB is left with just lead7/lead8 - lead6 moved to admin above.
         JsonNode ownerBEntry = ownerById.get(ownerB.employeeId().toString());
-        assertThat(ownerBEntry.get("leadCount").asLong()).isEqualTo(3);
+        assertThat(ownerBEntry.get("leadCount").asLong()).isEqualTo(2);
         assertThat(ownerBEntry.get("closedWonCount").asLong()).isEqualTo(0);
 
         // ---- conversion-rate: 2 CLOSED_WON / 8 total = 25.00% exactly ----
@@ -195,9 +209,11 @@ class ReportingIT extends AbstractIntegrationTest {
         assertThat(visitsAfter.get("planned").asLong()).isEqualTo(1);
 
         // And the other org's own pipeline-summary reflects only its own 6 leads (5 + 1), not Org A's 8.
+        // None of these were created with an interest level (not Hot), so they default to
+        // INTERESTED rather than NEW - see LeadService#create's Hot-gating.
         JsonNode otherPipeline = getJson("/reports/pipeline-summary", otherAdmin.accessToken());
         assertThat(otherPipeline.get("totalLeads").asLong()).isEqualTo(6);
-        assertThat(otherPipeline.get("byStatus").get("NEW").asLong()).isEqualTo(6);
+        assertThat(otherPipeline.get("byStatus").get("INTERESTED").asLong()).isEqualTo(6);
     }
 
     @Test
@@ -303,17 +319,18 @@ class ReportingIT extends AbstractIntegrationTest {
         String hotId = findMasterIdByCode(interestLevels, "HOT");
         String warmId = findMasterIdByCode(interestLevels, "WARM");
 
-        // 2 Hot leads: one NEW, one CONTACTED.
+        // 2 Hot leads: one NEW, one CONTACTED - only a Hot lead can progress through the
+        // normal pipeline (see LeadService#updateStatus's gating), so CONTACTED requires hotId.
         String hotNew = createLeadWithInterest(admin.accessToken(), masters, "Hot New Co", "9400000001", hotId);
         String hotContacted = createLeadWithInterest(admin.accessToken(), masters, "Hot Contacted Co", "9400000002", hotId);
         patchStatus(admin.accessToken(), hotContacted, "CONTACTED", null);
 
-        // 1 Warm lead: NEGOTIATION.
-        String warmNegotiation = createLeadWithInterest(admin.accessToken(), masters, "Warm Negotiation Co",
-                "9400000003", warmId);
-        patchStatus(admin.accessToken(), warmNegotiation, "NEGOTIATION", null);
+        // 1 Warm lead: not Hot, so it's locked to INTERESTED (its default status on creation) -
+        // NEGOTIATION is no longer a reachable status for a Warm lead.
+        createLeadWithInterest(admin.accessToken(), masters, "Warm Interested Co", "9400000003", warmId);
 
-        // 1 lead with no interest level set at all: NEW (falls into "Not Set").
+        // 1 lead with no interest level set at all: also not Hot, so it defaults to INTERESTED
+        // too (falls into "Not Set").
         createLead(admin.accessToken(), masters, "No Interest Co", "Contact", "9400000004");
 
         JsonNode response = getJson("/reports/interest-level-status-matrix", admin.accessToken());
@@ -331,14 +348,14 @@ class ReportingIT extends AbstractIntegrationTest {
         assertThat(hotRow.get("total").asLong()).isEqualTo(2);
 
         JsonNode warmRow = rows.get(1);
-        assertThat(warmRow.get("byStatus").get("NEGOTIATION").asLong()).isEqualTo(1);
+        assertThat(warmRow.get("byStatus").get("INTERESTED").asLong()).isEqualTo(1);
         assertThat(warmRow.get("total").asLong()).isEqualTo(1);
 
         JsonNode coldRow = rows.get(2);
         assertThat(coldRow.get("total").asLong()).isEqualTo(0);
 
         JsonNode notSetRow = rows.get(3);
-        assertThat(notSetRow.get("byStatus").get("NEW").asLong()).isEqualTo(1);
+        assertThat(notSetRow.get("byStatus").get("INTERESTED").asLong()).isEqualTo(1);
         assertThat(notSetRow.get("total").asLong()).isEqualTo(1);
 
         assertThat(get("/reports/interest-level-status-matrix", employee.accessToken()).getStatusCode())

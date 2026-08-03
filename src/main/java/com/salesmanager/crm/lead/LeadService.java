@@ -132,7 +132,7 @@ public class LeadService {
                 .remarks(request.remarks())
                 .nextFollowupDate(request.nextFollowupDate())
                 .expectedCloseDate(request.expectedCloseDate())
-                .status(LeadStatus.NEW)
+                .status(isHotInterestLevel(request.interestLevelId()) ? LeadStatus.NEW : LeadStatus.INTERESTED)
                 .ownerId(currentEmployeeId)
                 .createdBy(currentEmployeeId)
                 .productIds(new HashSet<>(request.productIds() != null ? request.productIds() : Set.of()))
@@ -260,12 +260,28 @@ public class LeadService {
      * otherwise ignored rather than crashing the request. Any other status value is a plain
      * status change - lostReasonId/lostReasonOther/interestLevelId are left untouched.
      */
-    @Transactional(noRollbackFor = {NotFoundException.class, InvalidReferenceException.class})
+    @Transactional(noRollbackFor = {NotFoundException.class, InvalidReferenceException.class,
+            InvalidLeadStatusException.class})
     public Lead updateStatus(UUID id, LeadStatusUpdateRequest request) {
         Lead lead = loadForCurrentUser(id);
         // Captured BEFORE mutating below, so the activity-log entry at the end of this method
         // can describe the actual transition ("from X to Y") rather than just the new value.
         LeadStatus oldStatus = lead.getStatus();
+        // Only set (to the pre-reassignment owner) inside the LOST branch below - stays null,
+        // and the post-save reassignment notification/activity-log block is skipped, for every
+        // other status value.
+        UUID previousOwnerId = null;
+
+        // A lead only progresses through the normal pipeline while its Interest Level is Hot;
+        // anything else is locked to INTERESTED, mirroring the frontend hiding the status
+        // dropdown entirely for a non-Hot lead. LOST is always reachable regardless (marking
+        // any lead - Warm, Cold, or unset - lost is a normal outcome, not gated by temperature).
+        if (request.status() != LeadStatus.LOST
+                && request.status() != LeadStatus.INTERESTED
+                && !isHotInterestLevel(lead.getInterestLevelId())) {
+            throw new InvalidLeadStatusException(
+                    "Status can only be set to Interested or Lost while Interest Level isn't Hot");
+        }
 
         if (request.status() == LeadStatus.LOST) {
             if (request.lostReasonId() == null && request.lostReasonOther() == null) {
@@ -290,6 +306,19 @@ public class LeadService {
                             () -> log.warn("No INTEREST_LEVEL master row with code COLD found for org {}; "
                                             + "leaving interestLevelId unchanged on lead {}",
                                     lead.getOrganizationId(), lead.getId()));
+
+            // Unassign from the current owner and hand back to the org's single Admin (see
+            // MultipleAdminNotAllowedException - every org has exactly one) so a Lost lead
+            // re-enters the reassignable pool rather than sitting invisibly under whichever
+            // rep lost it.
+            previousOwnerId = lead.getOwnerId();
+            List<Employee> admins = employeeRepository.findByOrganizationIdAndRole(lead.getOrganizationId(), Role.ADMIN);
+            if (!admins.isEmpty()) {
+                lead.setOwnerId(admins.get(0).getId());
+            } else {
+                log.warn("No ADMIN found for org {}; leaving Lost lead {} with its current owner",
+                        lead.getOrganizationId(), lead.getId());
+            }
         } else {
             lead.setStatus(request.status());
         }
@@ -303,7 +332,34 @@ public class LeadService {
                     "Status changed from " + oldStatus + " to " + saved.getStatus());
         }
 
+        if (previousOwnerId != null && !previousOwnerId.equals(saved.getOwnerId())) {
+            String actorName = employeeRepository.findById(currentUser.get().getEmployeeId())
+                    .map(Employee::getFullName)
+                    .orElse(null);
+            notificationService.create(saved.getOwnerId(), NotificationType.LEAD_REASSIGNED,
+                    buildReassignmentPayload(saved, actorName));
+            activityLogService.record(saved.getId(), saved.getOwnerId(), saved.getCompanyName(),
+                    ActivityType.LEAD_REASSIGNED, currentUser.get().getEmployeeId(),
+                    "Lead auto-reassigned to Admin after being marked Lost");
+        }
+
         return saved;
+    }
+
+    /**
+     * True only when {@code interestLevelId} resolves to the fixed INTEREST_LEVEL/HOT master
+     * row - a null id, a deleted/invalid id, or a free-text interestLevelOther (which has no id
+     * to resolve at all) are all treated as not-Hot. Drives both create()'s initial status and
+     * updateStatus()'s gating.
+     */
+    private boolean isHotInterestLevel(UUID interestLevelId) {
+        if (interestLevelId == null) {
+            return false;
+        }
+        return masterDataRepository.findById(interestLevelId)
+                .map(MasterData::getCode)
+                .map(code -> code.equalsIgnoreCase("HOT"))
+                .orElse(false);
     }
 
     /**

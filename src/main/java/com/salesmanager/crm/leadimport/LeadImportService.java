@@ -57,7 +57,7 @@ public class LeadImportService {
      * Reason (LeadService#updateStatus), which this bulk-import MVP does not collect.
      */
     static final Set<LeadStatus> ALLOWED_IMPORT_STATUSES = EnumSet.of(
-            LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.NEGOTIATION,
+            LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.NEGOTIATION, LeadStatus.INTERESTED,
             LeadStatus.CLOSED_WON, LeadStatus.LAPSED);
 
     /** The 6 Lead fields backed by the shared master_data table - see resolveMasterField. */

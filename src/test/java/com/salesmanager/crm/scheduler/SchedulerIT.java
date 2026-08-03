@@ -72,7 +72,6 @@ class SchedulerIT extends AbstractIntegrationTest {
     @Test
     void overdueTimedVisit_flipsToMissed_andNotifiesEveryAdmin_nonOverdueVisitUntouched() {
         AuthResponse admin = registerOrganization("Scheduler Timed Org");
-        AuthResponse secondAdmin = createAndLoginEmployee(admin.accessToken(), "timedSecondAdmin", Role.ADMIN);
         AuthResponse owner = createAndLoginEmployee(admin.accessToken(), "timedOwner", Role.EMPLOYEE);
 
         UUID leadId = seedLead(admin.orgId(), owner.employeeId(), admin.employeeId(),
@@ -90,7 +89,7 @@ class SchedulerIT extends AbstractIntegrationTest {
         assertThat(getVisitStatus(admin.accessToken(), overdueVisitId)).isEqualTo("MISSED");
         assertThat(getVisitStatus(admin.accessToken(), futureVisitId)).isEqualTo("PLANNED");
 
-        // Every ADMIN in the org gets escalated - not just one.
+        // The org's (single) Admin gets escalated.
         List<JsonNode> adminNotifications = notificationsOfType(admin.accessToken(), "VISIT_MISSED");
         assertThat(adminNotifications).hasSize(1);
         assertThat(adminNotifications.get(0).get("payload").asText())
@@ -103,10 +102,6 @@ class SchedulerIT extends AbstractIntegrationTest {
         assertThat(timedPayload.get("visitDate").asText()).isEqualTo(LocalDate.now().minusDays(1).toString());
         assertThat(timedPayload.get("scheduledTime").asText()).startsWith("10:00");
         assertThat(timedPayload.get("employeeName").asText()).isEqualTo("Test Employee timedOwner");
-
-        List<JsonNode> secondAdminNotifications = notificationsOfType(secondAdmin.accessToken(), "VISIT_MISSED");
-        assertThat(secondAdminNotifications).hasSize(1);
-        assertThat(secondAdminNotifications.get(0).get("payload").asText()).contains(overdueVisitId.toString());
 
         // The visit's own owner (the parent Lead's owner) is notified directly too, even though
         // they're a plain EMPLOYEE, not an ADMIN - see overdueTimedVisit_ownedByEmployee_* below
@@ -221,7 +216,6 @@ class SchedulerIT extends AbstractIntegrationTest {
     @Test
     void lapsedLeads_ownersStillNotifiedIndividually_andEachOrgsAdminsGetExactlyOneScopedDigest() {
         AuthResponse orgA = registerOrganization("Scheduler Digest Org A");
-        AuthResponse orgASecondAdmin = createAndLoginEmployee(orgA.accessToken(), "digestAAdmin2", Role.ADMIN);
         AuthResponse orgAOwner1 = createAndLoginEmployee(orgA.accessToken(), "digestAOwner1", Role.EMPLOYEE);
         AuthResponse orgAOwner2 = createAndLoginEmployee(orgA.accessToken(), "digestAOwner2", Role.EMPLOYEE);
 
@@ -249,13 +243,11 @@ class SchedulerIT extends AbstractIntegrationTest {
         assertThat(notificationsOfType(orgAOwner2.accessToken(), "LEAD_LAPSED")).hasSize(1);
         assertThat(notificationsOfType(orgBOwner.accessToken(), "LEAD_LAPSED")).hasSize(1);
 
-        // Every Admin in Org A gets exactly ONE digest for this run - not two, even though two
-        // leads lapsed there - and it's scoped to Org A's count of 2.
-        for (String token : List.of(orgA.accessToken(), orgASecondAdmin.accessToken())) {
-            List<JsonNode> digests = notificationsOfType(token, "LEAD_LAPSED_DIGEST");
-            assertThat(digests).hasSize(1);
-            assertThat(parse(digests.get(0).get("payload").asText()).get("count").asInt()).isEqualTo(2);
-        }
+        // Org A's Admin gets exactly ONE digest for this run - not two, even though two leads
+        // lapsed there - and it's scoped to Org A's count of 2.
+        List<JsonNode> orgADigests = notificationsOfType(orgA.accessToken(), "LEAD_LAPSED_DIGEST");
+        assertThat(orgADigests).hasSize(1);
+        assertThat(parse(orgADigests.get(0).get("payload").asText()).get("count").asInt()).isEqualTo(2);
 
         // Org B's admin gets their own single digest, scoped to just Org B's count of 1 - not
         // contaminated by Org A's batch.
@@ -271,11 +263,9 @@ class SchedulerIT extends AbstractIntegrationTest {
     @Test
     void tenantIsolation_twoOrgsSweptInOnePass_bothTransitionCorrectly_noCrossContamination() {
         AuthResponse orgA = registerOrganization("Scheduler Isolation Org A");
-        AuthResponse orgASecondAdmin = createAndLoginEmployee(orgA.accessToken(), "isoAAdmin2", Role.ADMIN);
         AuthResponse orgAOwner = createAndLoginEmployee(orgA.accessToken(), "isoAOwner", Role.EMPLOYEE);
 
         AuthResponse orgB = registerOrganization("Scheduler Isolation Org B");
-        AuthResponse orgBSecondAdmin = createAndLoginEmployee(orgB.accessToken(), "isoBAdmin2", Role.ADMIN);
         AuthResponse orgBOwner = createAndLoginEmployee(orgB.accessToken(), "isoBOwner", Role.EMPLOYEE);
 
         UUID leadA = seedLead(orgA.orgId(), orgAOwner.employeeId(), orgA.employeeId(),
@@ -298,25 +288,21 @@ class SchedulerIT extends AbstractIntegrationTest {
         assertThat(getLeadStatus(orgA.accessToken(), leadA)).isEqualTo("LAPSED");
         assertThat(getLeadStatus(orgB.accessToken(), leadB)).isEqualTo("LAPSED");
 
-        // Org A's admins/owner only ever hear about Org A's visit/lead.
-        for (String token : List.of(orgA.accessToken(), orgASecondAdmin.accessToken())) {
-            List<JsonNode> notifications = notificationsOfType(token, "VISIT_MISSED");
-            assertThat(notifications).hasSize(1);
-            assertThat(notifications.get(0).get("payload").asText())
-                    .contains(visitA.toString()).doesNotContain(visitB.toString());
-        }
+        // Org A's admin/owner only ever hear about Org A's visit/lead.
+        List<JsonNode> orgAAdminNotifications = notificationsOfType(orgA.accessToken(), "VISIT_MISSED");
+        assertThat(orgAAdminNotifications).hasSize(1);
+        assertThat(orgAAdminNotifications.get(0).get("payload").asText())
+                .contains(visitA.toString()).doesNotContain(visitB.toString());
         List<JsonNode> orgALeadNotifications = notificationsOfType(orgAOwner.accessToken(), "LEAD_LAPSED");
         assertThat(orgALeadNotifications).hasSize(1);
         assertThat(orgALeadNotifications.get(0).get("payload").asText())
                 .contains(leadA.toString()).doesNotContain(leadB.toString());
 
-        // Org B's admins/owner only ever hear about Org B's visit/lead.
-        for (String token : List.of(orgB.accessToken(), orgBSecondAdmin.accessToken())) {
-            List<JsonNode> notifications = notificationsOfType(token, "VISIT_MISSED");
-            assertThat(notifications).hasSize(1);
-            assertThat(notifications.get(0).get("payload").asText())
-                    .contains(visitB.toString()).doesNotContain(visitA.toString());
-        }
+        // Org B's admin/owner only ever hear about Org B's visit/lead.
+        List<JsonNode> orgBAdminNotifications = notificationsOfType(orgB.accessToken(), "VISIT_MISSED");
+        assertThat(orgBAdminNotifications).hasSize(1);
+        assertThat(orgBAdminNotifications.get(0).get("payload").asText())
+                .contains(visitB.toString()).doesNotContain(visitA.toString());
         List<JsonNode> orgBLeadNotifications = notificationsOfType(orgBOwner.accessToken(), "LEAD_LAPSED");
         assertThat(orgBLeadNotifications).hasSize(1);
         assertThat(orgBLeadNotifications.get(0).get("payload").asText())

@@ -244,6 +244,36 @@ class EmployeeCrudIT extends AbstractIntegrationTest {
         assertThat(deactivateAttempt.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
+    /**
+     * Every organization has exactly one Admin (the "super admin") - EmployeeService#create
+     * rejects a second one outright, and #update rejects promoting a plain EMPLOYEE into a
+     * second Admin, but re-saving the existing Admin's own record with role=ADMIN unchanged is
+     * still allowed (not a "second admin", the same one).
+     */
+    @Test
+    void secondAdminInSameOrg_rejectedOnCreateAndOnPromoteViaUpdate_butReSavingExistingAdminIsFine() {
+        AuthResponse admin = registerOrganization("Single Admin Org");
+
+        Map<String, Object> createBody = Map.of(
+                "fullName", "Would-be Second Admin",
+                "email", "secondadmin-" + UUID.randomUUID() + "@lifecycle.test",
+                "password", "supersecret1",
+                "role", Role.ADMIN.name());
+        ResponseEntity<String> createAttempt = post("/employees", admin.accessToken(), createBody);
+        assertThat(createAttempt.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        AuthResponse employee = createAndLoginEmployee(admin.accessToken());
+        Map<String, Object> promoteBody = Map.of("role", Role.ADMIN.name());
+        ResponseEntity<String> promoteAttempt = put("/employees/" + employee.employeeId(), admin.accessToken(),
+                promoteBody);
+        assertThat(promoteAttempt.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        Map<String, Object> reSaveBody = Map.of("role", Role.ADMIN.name(), "fullName", "Still The Admin");
+        ResponseEntity<String> reSaveAttempt = put("/employees/" + admin.employeeId(), admin.accessToken(),
+                reSaveBody);
+        assertThat(reSaveAttempt.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
     // ---- helpers ----
 
     private record CityAndState(String cityId, String wrongStateId) {

@@ -6,6 +6,7 @@ import com.salesmanager.crm.employee.dto.EmployeeUpdateRequest;
 import com.salesmanager.crm.masterdata.InvalidReferenceException;
 import com.salesmanager.crm.masterdata.MasterDataService;
 import com.salesmanager.crm.masterdata.MasterType;
+import com.salesmanager.crm.security.CurrentUser;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -26,13 +27,16 @@ public class EmployeeService {
     private final EmployeeRepository employeeRepository;
     private final MasterDataService masterDataService;
     private final PasswordEncoder passwordEncoder;
+    private final CurrentUser currentUser;
 
     public EmployeeService(EmployeeRepository employeeRepository,
                             MasterDataService masterDataService,
-                            PasswordEncoder passwordEncoder) {
+                            PasswordEncoder passwordEncoder,
+                            CurrentUser currentUser) {
         this.employeeRepository = employeeRepository;
         this.masterDataService = masterDataService;
         this.passwordEncoder = passwordEncoder;
+        this.currentUser = currentUser;
     }
 
     // noRollbackFor is essential, not cosmetic - see MasterDataService's identical comment:
@@ -40,8 +44,12 @@ public class EmployeeService {
     // RuntimeException here would poison that transaction even though
     // GlobalExceptionHandler translates it into a normal 4xx response, causing an
     // UnexpectedRollbackException to escape uncaught once the response is already committed.
-    @Transactional(noRollbackFor = {InvalidReferenceException.class, NotFoundException.class})
+    @Transactional(noRollbackFor = {InvalidReferenceException.class, NotFoundException.class,
+            MultipleAdminNotAllowedException.class})
     public Employee create(EmployeeCreateRequest request) {
+        if (request.role() == Role.ADMIN) {
+            requireNoExistingAdmin(null);
+        }
         masterDataService.validateReference(request.designationId(), MasterType.DESIGNATION, "designationId");
         masterDataService.validateReference(request.stateId(), MasterType.STATE, "stateId");
         // Cross-checks cityId's parent against stateId when both are supplied on this
@@ -80,10 +88,15 @@ public class EmployeeService {
         return employeeRepository.saveAndFlush(employee);
     }
 
-    @Transactional(noRollbackFor = {NotFoundException.class, InvalidReferenceException.class})
+    @Transactional(noRollbackFor = {NotFoundException.class, InvalidReferenceException.class,
+            MultipleAdminNotAllowedException.class})
     public Employee update(UUID id, EmployeeUpdateRequest request) {
         Employee employee = employeeRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Employee not found: " + id));
+
+        if (request.role() == Role.ADMIN) {
+            requireNoExistingAdmin(id);
+        }
 
         if (request.managerId() != null) {
             validateManager(id, request.managerId());
@@ -129,6 +142,25 @@ public class EmployeeService {
         employee.setActive(false);
         // saveAndFlush - see create()'s comment above re: @CreationTimestamp/@UpdateTimestamp.
         return employeeRepository.saveAndFlush(employee);
+    }
+
+    /**
+     * Every organization has exactly one Admin (the "super admin") - enforced here rather than
+     * with a DB constraint (a partial unique index on (organization_id) WHERE role='ADMIN' would
+     * work too, but this gives a clean 409 with a message instead of a raw constraint-violation
+     * translation). {@code employeeIdBeingUpdated} is null on create (nothing to exclude yet);
+     * on update it excludes the employee's own existing row so re-saving the current Admin's
+     * record with role=ADMIN unchanged is never rejected as "already has one".
+     */
+    private void requireNoExistingAdmin(UUID employeeIdBeingUpdated) {
+        boolean anotherAdminExists = employeeRepository
+                .findByOrganizationIdAndRole(currentUser.get().getOrganizationId(), Role.ADMIN)
+                .stream()
+                .anyMatch(admin -> !admin.getId().equals(employeeIdBeingUpdated));
+        if (anotherAdminExists) {
+            throw new MultipleAdminNotAllowedException(
+                    "This organization already has an Admin - an organization can only have one");
+        }
     }
 
     /**

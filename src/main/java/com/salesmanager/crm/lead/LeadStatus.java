@@ -8,6 +8,7 @@ public enum LeadStatus {
     NEW,
     CONTACTED,
     NEGOTIATION,
+    INTERESTED,
     LOST,
     CLOSED_WON,
     LAPSED

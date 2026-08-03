@@ -80,6 +80,14 @@ app:
   # not the API's. Defaults to Vite's dev server for local dev.
   frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
 
+attachment:
+  # Local-disk base directory LocalFilesystemAttachmentStorageService writes Lead attachments
+  # under - MUST be overridden to a persistent, non-tmp path in any real environment (e.g. a
+  # dedicated directory on the EC2 instance's own disk, outside the deployed jar's working
+  # directory) via LEAD_ATTACHMENT_STORAGE_DIR. Swapping to S3 later means adding a new
+  # AttachmentStorageService implementation, not changing this key's meaning.
+  local-storage-dir: ${LEAD_ATTACHMENT_STORAGE_DIR:./data/lead-attachments}
+
 calendar:
   # Dev-only fallback - MUST be overridden via CALENDAR_TOKEN_ENCRYPTION_KEY env var in any real
   # environment, same pattern as jwt.secret. See TokenEncryptionService for how this is used
