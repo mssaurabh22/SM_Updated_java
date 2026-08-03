@@ -53,19 +53,19 @@ class InvoiceNumberingIT extends AbstractIntegrationTest {
         String nextYear = String.valueOf(LocalDate.now().getYear() + 1);
 
         JsonNode first = parse(createInvoice(admin.accessToken(), LocalDate.now()).getBody());
-        assertThat(first.get("invoiceNumber").asText()).isEqualTo("INV-" + thisYear + "-0001");
+        assertThat(first.get("invoiceNumber").asText()).isEqualTo("QUO-" + thisYear + "-0001");
 
         JsonNode second = parse(createInvoice(admin.accessToken(), LocalDate.now()).getBody());
-        assertThat(second.get("invoiceNumber").asText()).isEqualTo("INV-" + thisYear + "-0002");
+        assertThat(second.get("invoiceNumber").asText()).isEqualTo("QUO-" + thisYear + "-0002");
 
         // A future-dated invoice starts its OWN year's counter at 0001, not continuing from 2.
         JsonNode futureYear = parse(createInvoice(admin.accessToken(), LocalDate.now().plusYears(1)).getBody());
-        assertThat(futureYear.get("invoiceNumber").asText()).isEqualTo("INV-" + nextYear + "-0001");
+        assertThat(futureYear.get("invoiceNumber").asText()).isEqualTo("QUO-" + nextYear + "-0001");
 
         // Back to this year - continues from where it left off (3rd invoice of thisYear), not
         // reset again.
         JsonNode third = parse(createInvoice(admin.accessToken(), LocalDate.now()).getBody());
-        assertThat(third.get("invoiceNumber").asText()).isEqualTo("INV-" + thisYear + "-0003");
+        assertThat(third.get("invoiceNumber").asText()).isEqualTo("QUO-" + thisYear + "-0003");
     }
 
     @Test
@@ -93,7 +93,7 @@ class InvoiceNumberingIT extends AbstractIntegrationTest {
 
             int year = LocalDate.now().getYear();
             for (int i = 1; i <= threadCount; i++) {
-                assertThat(invoiceNumbers).contains(String.format("INV-%d-%04d", year, i));
+                assertThat(invoiceNumbers).contains(String.format("QUO-%d-%04d", year, i));
             }
         } finally {
             executor.shutdown();

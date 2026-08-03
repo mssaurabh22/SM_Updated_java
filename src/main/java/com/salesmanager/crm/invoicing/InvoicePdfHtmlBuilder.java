@@ -49,8 +49,8 @@ class InvoicePdfHtmlBuilder {
         }
         html.append("</div>")
                 .append("<div class=\"invoice-meta\">")
-                .append("<div class=\"invoice-title\">INVOICE</div>")
-                .append("<div>Invoice #: ").append(esc(invoice.getInvoiceNumber())).append("</div>")
+                .append("<div class=\"invoice-title\">QUOTATION</div>")
+                .append("<div>Quotation #: ").append(esc(invoice.getInvoiceNumber())).append("</div>")
                 .append("<div>Date: ").append(esc(invoice.getInvoiceDate().format(DATE_FORMAT))).append("</div>")
                 .append("</div>")
                 .append("</div>");
