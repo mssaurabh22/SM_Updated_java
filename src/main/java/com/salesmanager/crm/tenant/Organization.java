@@ -79,4 +79,23 @@ public class Organization extends BaseEntity {
 
     @Column(name = "invoice_footer_text", length = 1000)
     private String invoiceFooterText;
+
+    /** Payment/bank details shown in the "Payment Details" section of a generated Invoice PDF
+     * (invoicing.InvoicePdfHtmlBuilder) - added for the Quotations/Invoices plan's Invoice
+     * repurposing work (section 17.3). Same "lightweight, no format validation" precedent as
+     * the billing_* fields above. */
+    @Column(name = "bank_name", length = 255)
+    private String bankName;
+
+    @Column(name = "bank_account_number", length = 50)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_ifsc", length = 20)
+    private String bankIfsc;
+
+    @Column(name = "bank_branch", length = 255)
+    private String bankBranch;
+
+    @Column(name = "upi_id", length = 100)
+    private String upiId;
 }

@@ -48,6 +48,11 @@ public class BillingProfileService {
         organization.setBillingPhone(request.billingPhone());
         organization.setInvoiceHeaderText(request.invoiceHeaderText());
         organization.setInvoiceFooterText(request.invoiceFooterText());
+        organization.setBankName(request.bankName());
+        organization.setBankAccountNumber(request.bankAccountNumber());
+        organization.setBankIfsc(request.bankIfsc());
+        organization.setBankBranch(request.bankBranch());
+        organization.setUpiId(request.upiId());
         Organization saved = organizationRepository.saveAndFlush(organization);
         return BillingProfileResponse.from(saved);
     }

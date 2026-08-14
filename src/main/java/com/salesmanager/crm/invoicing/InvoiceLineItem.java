@@ -7,6 +7,7 @@ import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -38,6 +39,9 @@ public class InvoiceLineItem extends TenantAware {
     @Column(name = "product_id")
     private UUID productId;
 
+    @Column(name = "hsn_sac", length = 20)
+    private String hsnSac;
+
     @Column(nullable = false, length = 500)
     private String description;
 
@@ -47,14 +51,30 @@ public class InvoiceLineItem extends TenantAware {
     @Column(name = "unit_price", nullable = false)
     private BigDecimal unitPrice;
 
+    @Column(name = "discount_percent", nullable = false)
+    @Builder.Default
+    private BigDecimal discountPercent = BigDecimal.ZERO;
+
     @Column(name = "tax_rate_percent", nullable = false)
     private BigDecimal taxRatePercent;
 
     @Column(name = "line_subtotal", nullable = false)
     private BigDecimal lineSubtotal;
 
+    @Column(name = "line_discount_amount", nullable = false)
+    @Builder.Default
+    private BigDecimal lineDiscountAmount = BigDecimal.ZERO;
+
     @Column(name = "line_tax_amount", nullable = false)
     private BigDecimal lineTaxAmount;
+
+    @Column(name = "line_cgst_amount", nullable = false)
+    @Builder.Default
+    private BigDecimal lineCgstAmount = BigDecimal.ZERO;
+
+    @Column(name = "line_sgst_amount", nullable = false)
+    @Builder.Default
+    private BigDecimal lineSgstAmount = BigDecimal.ZERO;
 
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;

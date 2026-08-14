@@ -28,6 +28,9 @@ public record ProductCreateRequest(
         @Size(max = 50, message = "unitOfMeasure must be at most 50 characters")
         String unitOfMeasure,
 
+        @Size(max = 20, message = "hsnSacCode must be at most 20 characters")
+        String hsnSacCode,
+
         @NotNull(message = "stockQuantity is required")
         @Min(value = 0, message = "stockQuantity must not be negative")
         Integer stockQuantity,

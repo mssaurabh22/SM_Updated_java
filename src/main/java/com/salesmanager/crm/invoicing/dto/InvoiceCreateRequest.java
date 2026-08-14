@@ -37,8 +37,24 @@ public record InvoiceCreateRequest(
         @Size(max = 20, message = "customerGstin must be at most 20 characters")
         String customerGstin,
 
+        @Size(max = 255, message = "shipToName must be at most 255 characters")
+        String shipToName,
+
+        @Size(max = 1000, message = "shipToAddress must be at most 1000 characters")
+        String shipToAddress,
+
+        @Size(max = 20, message = "shipToGstin must be at most 20 characters")
+        String shipToGstin,
+
         @NotNull(message = "invoiceDate is required")
         LocalDate invoiceDate,
+
+        LocalDate dueDate,
+
+        @Size(max = 255, message = "placeOfSupply must be at most 255 characters")
+        String placeOfSupply,
+
+        boolean reverseCharge,
 
         @NotEmpty(message = "lineItems must contain at least one item")
         @Valid

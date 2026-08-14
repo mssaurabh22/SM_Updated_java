@@ -110,6 +110,7 @@ public class ProductService {
                 .unitPrice(request.unitPrice())
                 .taxRatePercent(request.taxRatePercent() != null ? request.taxRatePercent() : java.math.BigDecimal.ZERO)
                 .unitOfMeasure(request.unitOfMeasure())
+                .hsnSacCode(request.hsnSacCode())
                 .stockQuantity(request.stockQuantity())
                 .lowStockThreshold(request.lowStockThreshold())
                 .active(true)
@@ -140,6 +141,7 @@ public class ProductService {
         product.setUnitPrice(request.unitPrice());
         product.setTaxRatePercent(request.taxRatePercent() != null ? request.taxRatePercent() : java.math.BigDecimal.ZERO);
         product.setUnitOfMeasure(request.unitOfMeasure());
+        product.setHsnSacCode(request.hsnSacCode());
         product.setLowStockThreshold(request.lowStockThreshold());
         product.setActive(request.active());
         return productRepository.saveAndFlush(product);

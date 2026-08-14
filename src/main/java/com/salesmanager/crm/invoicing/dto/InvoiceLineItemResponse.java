@@ -7,24 +7,34 @@ import java.util.UUID;
 public record InvoiceLineItemResponse(
         UUID id,
         UUID productId,
+        String hsnSac,
         String description,
         BigDecimal quantity,
         BigDecimal unitPrice,
+        BigDecimal discountPercent,
         BigDecimal taxRatePercent,
         BigDecimal lineSubtotal,
+        BigDecimal lineDiscountAmount,
         BigDecimal lineTaxAmount,
+        BigDecimal lineCgstAmount,
+        BigDecimal lineSgstAmount,
         int sortOrder) {
 
     public static InvoiceLineItemResponse from(InvoiceLineItem item) {
         return new InvoiceLineItemResponse(
                 item.getId(),
                 item.getProductId(),
+                item.getHsnSac(),
                 item.getDescription(),
                 item.getQuantity(),
                 item.getUnitPrice(),
+                item.getDiscountPercent(),
                 item.getTaxRatePercent(),
                 item.getLineSubtotal(),
+                item.getLineDiscountAmount(),
                 item.getLineTaxAmount(),
+                item.getLineCgstAmount(),
+                item.getLineSgstAmount(),
                 item.getSortOrder());
     }
 }

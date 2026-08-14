@@ -54,6 +54,21 @@ final class LeadSpecifications {
                 productId == null ? null : cb.isMember(productId, root.get("productIds"));
     }
 
+    /** Backs the Reports Dashboard's global filter bar (section 17.5) - not used by GET /leads
+     * itself. */
+    static Specification<Lead> hasBusinessType(UUID businessTypeId) {
+        return (root, query, cb) ->
+                businessTypeId == null ? null : cb.equal(root.get("businessTypeId"), businessTypeId);
+    }
+
+    static Specification<Lead> hasNextFollowupDate(LocalDate date) {
+        return (root, query, cb) -> date == null ? null : cb.equal(root.get("nextFollowupDate"), date);
+    }
+
+    static Specification<Lead> hasExpectedCloseDate(LocalDate date) {
+        return (root, query, cb) -> date == null ? null : cb.equal(root.get("expectedCloseDate"), date);
+    }
+
     /** Filters on createdAt (an OffsetDateTime), given inclusive LocalDate bounds - dateTo is
      * treated as through-end-of-that-day (a strict "less than the start of the following day"
      * upper bound), not just midnight, so a lead created any time ON dateTo is included. Both

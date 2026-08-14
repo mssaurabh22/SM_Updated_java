@@ -71,8 +71,34 @@ public class Invoice extends TenantAware {
     @Column(name = "customer_gstin", length = 20)
     private String customerGstin;
 
+    /** Ship-To defaults to a copy of Bill-To on the frontend ("same as billing" checkbox) but is
+     * independently editable/stored - null when never diverged from Bill-To. */
+    @Column(name = "ship_to_name", length = 255)
+    private String shipToName;
+
+    @Column(name = "ship_to_address", length = 1000)
+    private String shipToAddress;
+
+    @Column(name = "ship_to_gstin", length = 20)
+    private String shipToGstin;
+
     @Column(name = "invoice_date", nullable = false)
     private LocalDate invoiceDate;
+
+    @Column(name = "due_date")
+    private LocalDate dueDate;
+
+    @Column(name = "place_of_supply", length = 255)
+    private String placeOfSupply;
+
+    @Column(name = "reverse_charge", nullable = false)
+    @Builder.Default
+    private boolean reverseCharge = false;
+
+    /** Set only when this invoice was created via QuotationController#convertToInvoice - null
+     * for a direct-create invoice (still fully supported, see InvoiceService#create). */
+    @Column(name = "quotation_id")
+    private UUID quotationId;
 
     @Column(nullable = false)
     private BigDecimal subtotal;

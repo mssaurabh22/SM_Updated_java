@@ -72,7 +72,7 @@ class InvoiceCrudIT extends AbstractIntegrationTest {
         assertThat(invoice.get("status").asText()).isEqualTo("UNPAID");
         assertThat(invoice.get("leadId").isNull()).isTrue();
         assertThat(invoice.get("invoiceNumber").asText())
-                .isEqualTo("QUO-" + LocalDate.now().getYear() + "-0001");
+                .isEqualTo("INV-" + LocalDate.now().getYear() + "-0001");
         assertThat(invoice.get("lineItems").size()).isEqualTo(1);
         assertThat(invoice.get("lineItems").get(0).get("productId").isNull()).isTrue();
     }

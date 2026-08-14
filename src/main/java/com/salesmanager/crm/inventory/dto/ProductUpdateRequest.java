@@ -33,6 +33,9 @@ public record ProductUpdateRequest(
         @Size(max = 50, message = "unitOfMeasure must be at most 50 characters")
         String unitOfMeasure,
 
+        @Size(max = 20, message = "hsnSacCode must be at most 20 characters")
+        String hsnSacCode,
+
         Integer lowStockThreshold,
 
         @NotNull(message = "active is required")

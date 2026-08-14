@@ -10,6 +10,8 @@ import com.salesmanager.crm.inventory.StockMovementReason;
 import com.salesmanager.crm.invoicing.dto.InvoiceCreateRequest;
 import com.salesmanager.crm.invoicing.dto.InvoiceLineItemRequest;
 import com.salesmanager.crm.invoicing.dto.InvoiceStatusUpdateRequest;
+import com.salesmanager.crm.quotation.Quotation;
+import com.salesmanager.crm.quotation.QuotationLineItem;
 import com.salesmanager.crm.security.CurrentUser;
 import com.salesmanager.crm.security.UserPrincipal;
 import java.math.BigDecimal;
@@ -121,15 +123,7 @@ public class InvoiceService {
         List<ResolvedLine> resolvedLines = resolveLines(rawLines, lockedProducts);
 
         // Phase 2 (writes): everything from here on should not legitimately fail.
-        BigDecimal subtotal = BigDecimal.ZERO;
-        BigDecimal taxTotal = BigDecimal.ZERO;
-        for (ResolvedLine line : resolvedLines) {
-            subtotal = subtotal.add(line.lineSubtotal);
-            taxTotal = taxTotal.add(line.lineTaxAmount);
-        }
-        subtotal = round(subtotal);
-        taxTotal = round(taxTotal);
-        BigDecimal grandTotal = round(subtotal.add(taxTotal));
+        Totals totals = sumTotals(resolvedLines);
 
         String invoiceNumber = invoiceNumberService.allocateNext(
                 principal.getOrganizationId(), request.invoiceDate().getYear());
@@ -145,30 +139,21 @@ public class InvoiceService {
                 .customerEmail(request.customerEmail())
                 .customerAddress(request.customerAddress())
                 .customerGstin(request.customerGstin())
+                .shipToName(request.shipToName())
+                .shipToAddress(request.shipToAddress())
+                .shipToGstin(request.shipToGstin())
                 .invoiceDate(request.invoiceDate())
-                .subtotal(subtotal)
-                .taxTotal(taxTotal)
-                .grandTotal(grandTotal)
+                .dueDate(request.dueDate())
+                .placeOfSupply(request.placeOfSupply())
+                .reverseCharge(request.reverseCharge())
+                .subtotal(totals.subtotal)
+                .taxTotal(totals.taxTotal)
+                .grandTotal(totals.grandTotal)
                 .status(InvoiceStatus.UNPAID)
                 .notes(request.notes())
                 .build();
         Invoice savedInvoice = invoiceRepository.saveAndFlush(invoice);
-
-        int sortOrder = 0;
-        for (ResolvedLine line : resolvedLines) {
-            InvoiceLineItem lineItem = InvoiceLineItem.builder()
-                    .invoiceId(savedInvoice.getId())
-                    .productId(line.productId)
-                    .description(line.description)
-                    .quantity(line.quantity)
-                    .unitPrice(line.unitPrice)
-                    .taxRatePercent(line.taxRatePercent)
-                    .lineSubtotal(line.lineSubtotal)
-                    .lineTaxAmount(line.lineTaxAmount)
-                    .sortOrder(sortOrder++)
-                    .build();
-            invoiceLineItemRepository.saveAndFlush(lineItem);
-        }
+        saveLineItems(savedInvoice.getId(), resolvedLines);
 
         // Same ascending-id order as the Phase 1 validation loop above - the lock-ordering
         // discipline applies here too, even though these calls should no longer be able to fail.
@@ -179,6 +164,120 @@ public class InvoiceService {
         }
 
         return savedInvoice;
+    }
+
+    /**
+     * Builds a real Invoice from an already-APPROVED/SENT Quotation - called only by
+     * quotation.QuotationService#convertToInvoice, sharing this class's exact lock-ordering/
+     * two-phase validate-then-write discipline (see this class's javadoc) since converting is
+     * the genuine stock-out event a Quotation itself never triggers. Every field is a FRESH
+     * snapshot taken from the Quotation's current line items at conversion time - not a live
+     * reference - same "keeps its own copy from this point on" discipline used everywhere else
+     * in this codebase.
+     */
+    @Transactional(noRollbackFor = {InvalidInvoiceLineItemException.class, NotFoundException.class,
+            InsufficientStockException.class})
+    public Invoice createFromQuotation(Quotation quotation, List<QuotationLineItem> quotationLineItems) {
+        UUID actingEmployeeId = currentUser.get().getEmployeeId();
+
+        List<RawLine> rawLines = new ArrayList<>();
+        for (QuotationLineItem item : quotationLineItems) {
+            rawLines.add(new RawLine(item.getProductId(), item.getHsnSac(), item.getDescription(), item.getQuantity(),
+                    item.getUnitPrice(), item.getDiscountPercent(), item.getTaxRatePercent()));
+        }
+        Map<UUID, BigDecimal> quantityByProductId = aggregateQuantityByProduct(rawLines);
+        Map<UUID, Product> lockedProducts = new HashMap<>();
+        for (UUID productId : quantityByProductId.keySet()) {
+            Product locked = productService.lockAndCheckStock(productId,
+                    quantityByProductId.get(productId).intValueExact());
+            lockedProducts.put(productId, locked);
+        }
+        List<ResolvedLine> resolvedLines = resolveLines(rawLines, lockedProducts);
+        Totals totals = sumTotals(resolvedLines);
+
+        String invoiceNumber = invoiceNumberService.allocateNext(
+                quotation.getOrganizationId(), quotation.getQuotationDate().getYear());
+
+        Invoice invoice = Invoice.builder()
+                .invoiceNumber(invoiceNumber)
+                .leadId(quotation.getLeadId())
+                .ownerId(quotation.getOwnerId())
+                .createdBy(actingEmployeeId)
+                .customerName(quotation.getCustomerName())
+                .customerContactPerson(quotation.getCustomerContactPerson())
+                .customerPhone(quotation.getCustomerPhone())
+                .customerEmail(quotation.getCustomerEmail())
+                .customerAddress(quotation.getCustomerBillingAddress())
+                .customerGstin(quotation.getCustomerGstin())
+                .shipToName(quotation.getCustomerName())
+                .shipToAddress(quotation.getCustomerBillingAddress())
+                .shipToGstin(quotation.getCustomerGstin())
+                .invoiceDate(java.time.LocalDate.now())
+                .dueDate(java.time.LocalDate.now().plusDays(15))
+                .quotationId(quotation.getId())
+                .subtotal(totals.subtotal)
+                .taxTotal(totals.taxTotal)
+                .grandTotal(totals.grandTotal)
+                .status(InvoiceStatus.UNPAID)
+                .notes(quotation.getQuotationNotes())
+                .build();
+        Invoice savedInvoice = invoiceRepository.saveAndFlush(invoice);
+        saveLineItems(savedInvoice.getId(), resolvedLines);
+
+        for (Map.Entry<UUID, BigDecimal> entry : quantityByProductId.entrySet()) {
+            int quantity = entry.getValue().intValueExact();
+            productService.applyStockChange(entry.getKey(), -quantity, StockMovementReason.INVOICE,
+                    savedInvoice.getId(), "Invoice " + savedInvoice.getInvoiceNumber(), actingEmployeeId);
+        }
+
+        return savedInvoice;
+    }
+
+    private void saveLineItems(UUID invoiceId, List<ResolvedLine> resolvedLines) {
+        int sortOrder = 0;
+        for (ResolvedLine line : resolvedLines) {
+            InvoiceLineItem lineItem = InvoiceLineItem.builder()
+                    .invoiceId(invoiceId)
+                    .productId(line.productId)
+                    .hsnSac(line.hsnSac)
+                    .description(line.description)
+                    .quantity(line.quantity)
+                    .unitPrice(line.unitPrice)
+                    .discountPercent(line.discountPercent)
+                    .taxRatePercent(line.taxRatePercent)
+                    .lineSubtotal(line.lineSubtotal)
+                    .lineDiscountAmount(line.lineDiscountAmount)
+                    .lineTaxAmount(line.lineCgstAmount.add(line.lineSgstAmount))
+                    .lineCgstAmount(line.lineCgstAmount)
+                    .lineSgstAmount(line.lineSgstAmount)
+                    .sortOrder(sortOrder++)
+                    .build();
+            invoiceLineItemRepository.saveAndFlush(lineItem);
+        }
+    }
+
+    private Totals sumTotals(List<ResolvedLine> resolvedLines) {
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal taxTotal = BigDecimal.ZERO;
+        for (ResolvedLine line : resolvedLines) {
+            subtotal = subtotal.add(line.lineSubtotal);
+            taxTotal = taxTotal.add(line.lineCgstAmount).add(line.lineSgstAmount);
+        }
+        subtotal = round(subtotal);
+        taxTotal = round(taxTotal);
+        BigDecimal grandTotal = round(subtotal.subtract(sumDiscount(resolvedLines)).add(taxTotal));
+        return new Totals(subtotal, taxTotal, grandTotal);
+    }
+
+    private BigDecimal sumDiscount(List<ResolvedLine> resolvedLines) {
+        BigDecimal discountTotal = BigDecimal.ZERO;
+        for (ResolvedLine line : resolvedLines) {
+            discountTotal = discountTotal.add(line.lineDiscountAmount);
+        }
+        return round(discountTotal);
+    }
+
+    private record Totals(BigDecimal subtotal, BigDecimal taxTotal, BigDecimal grandTotal) {
     }
 
     /** Sums requested quantity per distinct product (referenced by more than one line means one
@@ -197,15 +296,18 @@ public class InvoiceService {
     /** A line item after structural validation only - a catalog line at this point carries just
      * its productId + quantity, NOT yet a price/name snapshot (that comes from the single
      * locked read in {@link #create}'s Phase 1, via {@link #resolveLines}). */
-    private record RawLine(UUID productId, String description, BigDecimal quantity,
-                            BigDecimal unitPrice, BigDecimal taxRatePercent) {
+    private record RawLine(UUID productId, String hsnSac, String description, BigDecimal quantity,
+                            BigDecimal unitPrice, BigDecimal discountPercent, BigDecimal taxRatePercent) {
     }
 
     /** One resolved, snapshot-ready line - either derived from the Phase 1 locked Product read
-     * (catalog line) or taken as-is from the request (ad-hoc line). */
-    private record ResolvedLine(UUID productId, String description, BigDecimal quantity,
-                                 BigDecimal unitPrice, BigDecimal taxRatePercent,
-                                 BigDecimal lineSubtotal, BigDecimal lineTaxAmount) {
+     * (catalog line) or taken as-is from the request (ad-hoc line). CGST/SGST are the line's tax
+     * split in half (intra-state assumption, no IGST modeled in v1 - see Quotation's identical
+     * convention). */
+    private record ResolvedLine(UUID productId, String hsnSac, String description, BigDecimal quantity,
+                                 BigDecimal unitPrice, BigDecimal discountPercent, BigDecimal taxRatePercent,
+                                 BigDecimal lineSubtotal, BigDecimal lineDiscountAmount,
+                                 BigDecimal lineCgstAmount, BigDecimal lineSgstAmount) {
     }
 
     /** Mutual exclusivity (exactly one of productId/description) and whole-number-quantity (for
@@ -224,8 +326,9 @@ public class InvoiceService {
                 throw new InvalidInvoiceLineItemException("quantity",
                         "quantity must be a whole number for a catalog product line");
             }
-            rawLines.add(new RawLine(lineRequest.productId(), lineRequest.description(), lineRequest.quantity(),
-                    lineRequest.unitPrice(), lineRequest.taxRatePercent()));
+            rawLines.add(new RawLine(lineRequest.productId(), lineRequest.hsnSac(), lineRequest.description(),
+                    lineRequest.quantity(), lineRequest.unitPrice(), lineRequest.discountPercent(),
+                    lineRequest.taxRatePercent()));
         }
         return rawLines;
     }
@@ -237,24 +340,37 @@ public class InvoiceService {
     private List<ResolvedLine> resolveLines(List<RawLine> rawLines, Map<UUID, Product> lockedProducts) {
         List<ResolvedLine> resolved = new ArrayList<>();
         for (RawLine line : rawLines) {
+            String hsnSac;
+            String description;
+            BigDecimal unitPrice;
+            BigDecimal taxRatePercent;
+            UUID productId = null;
             if (line.productId != null) {
                 Product product = lockedProducts.get(line.productId);
-                BigDecimal lineSubtotal = round(product.getUnitPrice().multiply(line.quantity));
-                BigDecimal lineTaxAmount = round(lineSubtotal
-                        .multiply(product.getTaxRatePercent())
-                        .divide(BigDecimal.valueOf(100), 10, RoundingMode.HALF_UP));
-                resolved.add(new ResolvedLine(product.getId(), product.getName(), line.quantity,
-                        product.getUnitPrice(), product.getTaxRatePercent(), lineSubtotal, lineTaxAmount));
+                productId = product.getId();
+                hsnSac = product.getHsnSacCode();
+                description = product.getName();
+                unitPrice = product.getUnitPrice();
+                taxRatePercent = product.getTaxRatePercent();
             } else {
-                BigDecimal unitPrice = line.unitPrice != null ? line.unitPrice : BigDecimal.ZERO;
-                BigDecimal taxRatePercent = line.taxRatePercent != null ? line.taxRatePercent : BigDecimal.ZERO;
-                BigDecimal lineSubtotal = round(unitPrice.multiply(line.quantity));
-                BigDecimal lineTaxAmount = round(lineSubtotal
-                        .multiply(taxRatePercent)
-                        .divide(BigDecimal.valueOf(100), 10, RoundingMode.HALF_UP));
-                resolved.add(new ResolvedLine(null, line.description, line.quantity,
-                        unitPrice, taxRatePercent, lineSubtotal, lineTaxAmount));
+                hsnSac = line.hsnSac;
+                description = line.description;
+                unitPrice = line.unitPrice != null ? line.unitPrice : BigDecimal.ZERO;
+                taxRatePercent = line.taxRatePercent != null ? line.taxRatePercent : BigDecimal.ZERO;
             }
+            BigDecimal discountPercent = line.discountPercent != null ? line.discountPercent : BigDecimal.ZERO;
+
+            BigDecimal lineSubtotal = round(unitPrice.multiply(line.quantity));
+            BigDecimal lineDiscountAmount = round(lineSubtotal.multiply(discountPercent)
+                    .divide(BigDecimal.valueOf(100), 10, RoundingMode.HALF_UP));
+            BigDecimal lineTaxableAmount = lineSubtotal.subtract(lineDiscountAmount);
+            BigDecimal halfTaxRate = taxRatePercent.divide(BigDecimal.valueOf(2), 10, RoundingMode.HALF_UP);
+            BigDecimal lineCgstAmount = round(lineTaxableAmount.multiply(halfTaxRate)
+                    .divide(BigDecimal.valueOf(100), 10, RoundingMode.HALF_UP));
+            BigDecimal lineSgstAmount = lineCgstAmount;
+
+            resolved.add(new ResolvedLine(productId, hsnSac, description, line.quantity, unitPrice, discountPercent,
+                    taxRatePercent, lineSubtotal, lineDiscountAmount, lineCgstAmount, lineSgstAmount));
         }
         return resolved;
     }

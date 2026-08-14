@@ -1,14 +1,19 @@
 package com.salesmanager.crm.reporting;
 
+import com.salesmanager.crm.lead.LeadDashboardFilter;
+import com.salesmanager.crm.lead.LeadStatus;
 import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
 import com.salesmanager.crm.reporting.dto.InterestLevelStatusMatrixResponse;
+import com.salesmanager.crm.reporting.dto.LeadDashboardResponse;
 import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
+import com.salesmanager.crm.reporting.dto.QuotationInvoiceSummaryResponse;
 import com.salesmanager.crm.reporting.dto.RevenueResponse;
 import com.salesmanager.crm.reporting.dto.TeamProgressResponse;
 import com.salesmanager.crm.reporting.dto.VisitsByTypeResponse;
 import com.salesmanager.crm.reporting.dto.VisitsCompletedVsMissedResponse;
 import java.time.LocalDate;
+import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -76,5 +81,30 @@ public class ReportingController {
     @GetMapping("/team-progress")
     public TeamProgressResponse teamProgress() {
         return reportingService.teamProgress();
+    }
+
+    @GetMapping("/lead-dashboard")
+    public LeadDashboardResponse leadDashboard(
+            @RequestParam(required = false) LeadStatus status,
+            @RequestParam(required = false) UUID ownerId,
+            @RequestParam(required = false) UUID interestLevelId,
+            @RequestParam(required = false) UUID stateId,
+            @RequestParam(required = false) UUID cityId,
+            @RequestParam(required = false) UUID productId,
+            @RequestParam(required = false) UUID businessTypeId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate nextFollowupDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedCloseDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo) {
+        LeadDashboardFilter filter = new LeadDashboardFilter(status, ownerId, interestLevelId, stateId, cityId,
+                productId, businessTypeId, nextFollowupDate, expectedCloseDate, dateFrom, dateTo);
+        return reportingService.leadDashboard(filter);
+    }
+
+    @GetMapping("/quotation-invoice-summary")
+    public QuotationInvoiceSummaryResponse quotationInvoiceSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo) {
+        return reportingService.quotationInvoiceSummary(dateFrom, dateTo);
     }
 }

@@ -19,5 +19,20 @@ public record BillingProfileUpdateRequest(
         String invoiceHeaderText,
 
         @Size(max = 1000, message = "invoiceFooterText must be at most 1000 characters")
-        String invoiceFooterText) {
+        String invoiceFooterText,
+
+        @Size(max = 255, message = "bankName must be at most 255 characters")
+        String bankName,
+
+        @Size(max = 50, message = "bankAccountNumber must be at most 50 characters")
+        String bankAccountNumber,
+
+        @Size(max = 20, message = "bankIfsc must be at most 20 characters")
+        String bankIfsc,
+
+        @Size(max = 255, message = "bankBranch must be at most 255 characters")
+        String bankBranch,
+
+        @Size(max = 100, message = "upiId must be at most 100 characters")
+        String upiId) {
 }

@@ -14,7 +14,12 @@ public record BillingProfileResponse(
         String billingPhone,
         boolean hasLogo,
         String invoiceHeaderText,
-        String invoiceFooterText) {
+        String invoiceFooterText,
+        String bankName,
+        String bankAccountNumber,
+        String bankIfsc,
+        String bankBranch,
+        String upiId) {
 
     public static BillingProfileResponse from(Organization organization) {
         return new BillingProfileResponse(
@@ -24,6 +29,11 @@ public record BillingProfileResponse(
                 organization.getBillingPhone(),
                 organization.getLogoImage() != null,
                 organization.getInvoiceHeaderText(),
-                organization.getInvoiceFooterText());
+                organization.getInvoiceFooterText(),
+                organization.getBankName(),
+                organization.getBankAccountNumber(),
+                organization.getBankIfsc(),
+                organization.getBankBranch(),
+                organization.getUpiId());
     }
 }

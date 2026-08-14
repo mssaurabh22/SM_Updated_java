@@ -440,6 +440,48 @@ public class LeadService {
     }
 
     /**
+     * Unpaged, filtered lead list for the Reports Dashboard (section 17.5) - reporting.
+     * ReportingService computes every stat card/chart/table grouping in Java (streams) over this
+     * one filtered fetch rather than N separately-filtered hand-rolled JPQL group-by queries, a
+     * pragmatic choice given this org's data volumes (see that method's own javadoc). Owner-
+     * scoping is identical to {@link #list}, just against a different filter shape.
+     */
+    @Transactional(readOnly = true)
+    public List<Lead> listAllForReports(LeadDashboardFilter filter) {
+        UserPrincipal principal = currentUser.get();
+        Specification<Lead> spec = Specification
+                .where(LeadSpecifications.hasStatus(filter.status()))
+                .and(LeadSpecifications.hasInterestLevel(filter.interestLevelId()))
+                .and(LeadSpecifications.hasState(filter.stateId()))
+                .and(LeadSpecifications.hasCity(filter.cityId()))
+                .and(LeadSpecifications.hasProduct(filter.productId()))
+                .and(LeadSpecifications.hasBusinessType(filter.businessTypeId()))
+                .and(LeadSpecifications.hasNextFollowupDate(filter.nextFollowupDate()))
+                .and(LeadSpecifications.hasExpectedCloseDate(filter.expectedCloseDate()))
+                .and(LeadSpecifications.createdBetween(filter.dateFrom(), filter.dateTo()));
+
+        if (principal.getRole() == Role.EMPLOYEE) {
+            Set<UUID> subordinateIds = employeeHierarchyService
+                    .getTeamVisibilityScope(principal.getOrganizationId(), principal.getEmployeeId());
+            if (subordinateIds.isEmpty()) {
+                spec = spec.and(LeadSpecifications.hasOwner(principal.getEmployeeId()));
+            } else {
+                Set<UUID> teamScope = new HashSet<>(subordinateIds);
+                teamScope.add(principal.getEmployeeId());
+                if (filter.ownerId() != null && teamScope.contains(filter.ownerId())) {
+                    spec = spec.and(LeadSpecifications.hasOwner(filter.ownerId()));
+                } else {
+                    spec = spec.and(LeadSpecifications.hasOwnerIn(teamScope));
+                }
+            }
+        } else {
+            spec = spec.and(LeadSpecifications.hasOwner(filter.ownerId()));
+        }
+
+        return leadRepository.findAll(spec);
+    }
+
+    /**
      * ADMIN can fetch any lead in their org; EMPLOYEE gets a NotFoundException (never a 403)
      * for a colleague's lead unless TEAM_VISIBILITY is entitled and the lead's owner is in
      * their subordinate chain - same information-hiding principle already established for

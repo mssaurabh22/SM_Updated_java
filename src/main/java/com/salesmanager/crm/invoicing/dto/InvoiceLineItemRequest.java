@@ -15,6 +15,9 @@ import java.util.UUID;
 public record InvoiceLineItemRequest(
         UUID productId,
 
+        @Size(max = 20, message = "hsnSac must be at most 20 characters")
+        String hsnSac,
+
         @Size(max = 500, message = "description must be at most 500 characters")
         String description,
 
@@ -24,6 +27,9 @@ public record InvoiceLineItemRequest(
 
         @DecimalMin(value = "0.0", message = "unitPrice must not be negative")
         BigDecimal unitPrice,
+
+        @DecimalMin(value = "0.0", message = "discountPercent must not be negative")
+        BigDecimal discountPercent,
 
         @DecimalMin(value = "0.0", message = "taxRatePercent must not be negative")
         BigDecimal taxRatePercent) {

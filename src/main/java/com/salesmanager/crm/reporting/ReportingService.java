@@ -9,24 +9,31 @@ import com.salesmanager.crm.employee.Role;
 import com.salesmanager.crm.entitlement.EntitlementService;
 import com.salesmanager.crm.entitlement.FeatureEntitlement;
 import com.salesmanager.crm.invoicing.InvoiceRepository;
+import com.salesmanager.crm.invoicing.InvoiceStatus;
 import com.salesmanager.crm.lead.Lead;
+import com.salesmanager.crm.lead.LeadDashboardFilter;
 import com.salesmanager.crm.lead.LeadInterestStatusCount;
 import com.salesmanager.crm.lead.LeadOwnerCount;
 import com.salesmanager.crm.lead.LeadOwnerStatusCount;
 import com.salesmanager.crm.lead.LeadRepository;
+import com.salesmanager.crm.lead.LeadService;
 import com.salesmanager.crm.lead.LeadSourceCount;
 import com.salesmanager.crm.lead.LeadStatus;
 import com.salesmanager.crm.lead.LeadStatusCount;
 import com.salesmanager.crm.masterdata.MasterData;
 import com.salesmanager.crm.masterdata.MasterDataRepository;
 import com.salesmanager.crm.masterdata.MasterType;
+import com.salesmanager.crm.quotation.QuotationRepository;
+import com.salesmanager.crm.quotation.QuotationStatus;
 import com.salesmanager.crm.reporting.dto.ConversionRateResponse;
 import com.salesmanager.crm.reporting.dto.InterestLevelStatusMatrixResponse;
 import com.salesmanager.crm.reporting.dto.InterestLevelStatusRow;
+import com.salesmanager.crm.reporting.dto.LeadDashboardResponse;
 import com.salesmanager.crm.reporting.dto.LeadSourceBreakdown;
 import com.salesmanager.crm.reporting.dto.LeadsBySourceResponse;
 import com.salesmanager.crm.reporting.dto.OwnerBreakdown;
 import com.salesmanager.crm.reporting.dto.PipelineSummaryResponse;
+import com.salesmanager.crm.reporting.dto.QuotationInvoiceSummaryResponse;
 import com.salesmanager.crm.reporting.dto.RevenueResponse;
 import com.salesmanager.crm.reporting.dto.TeamMemberProgress;
 import com.salesmanager.crm.reporting.dto.TeamProgressResponse;
@@ -78,29 +85,35 @@ import org.springframework.transaction.annotation.Transactional;
 public class ReportingService {
 
     private final LeadRepository leadRepository;
+    private final LeadService leadService;
     private final VisitRepository visitRepository;
     private final EmployeeRepository employeeRepository;
     private final EmployeeHierarchyService employeeHierarchyService;
     private final MasterDataRepository masterDataRepository;
     private final InvoiceRepository invoiceRepository;
+    private final QuotationRepository quotationRepository;
     private final ActivityLogRepository activityLogRepository;
     private final EntitlementService entitlementService;
     private final CurrentUser currentUser;
 
-    public ReportingService(LeadRepository leadRepository, VisitRepository visitRepository,
+    public ReportingService(LeadRepository leadRepository, LeadService leadService,
+                             VisitRepository visitRepository,
                              EmployeeRepository employeeRepository,
                              EmployeeHierarchyService employeeHierarchyService,
                              MasterDataRepository masterDataRepository,
                              InvoiceRepository invoiceRepository,
+                             QuotationRepository quotationRepository,
                              ActivityLogRepository activityLogRepository,
                              EntitlementService entitlementService,
                              CurrentUser currentUser) {
         this.leadRepository = leadRepository;
+        this.leadService = leadService;
         this.visitRepository = visitRepository;
         this.employeeRepository = employeeRepository;
         this.employeeHierarchyService = employeeHierarchyService;
         this.masterDataRepository = masterDataRepository;
         this.invoiceRepository = invoiceRepository;
+        this.quotationRepository = quotationRepository;
         this.activityLogRepository = activityLogRepository;
         this.entitlementService = entitlementService;
         this.currentUser = currentUser;
@@ -376,6 +389,259 @@ public class ReportingService {
                 ? invoiceRepository.sumGrandTotalBetween(effectiveFrom, effectiveTo)
                 : invoiceRepository.sumGrandTotalForOwnersBetween(ownerScope, effectiveFrom, effectiveTo);
         return new RevenueResponse(true, total);
+    }
+
+    /**
+     * Invoices Dashboard's stat-card row (section 17.4) - gated behind INVENTORY_MANAGEMENT
+     * (same reasoning as {@link #revenue}: Quotations/Invoicing is an opt-in feature). dateFrom/
+     * dateTo default to the current calendar month when omitted ("This Month", matching the
+     * screenshot's default range) and scope totalQuotations/approvedQuotations/
+     * convertedToInvoice/pendingInvoicesCount/monthlyBilling; "Pending Payments" and
+     * "Outstanding" are deliberately NOT period-scoped (see the DTO's own javadoc for why).
+     */
+    @Transactional(readOnly = true, noRollbackFor = AccessDeniedException.class)
+    public QuotationInvoiceSummaryResponse quotationInvoiceSummary(LocalDate dateFrom, LocalDate dateTo) {
+        Set<UUID> ownerScope = resolveOwnerScope();
+        UUID organizationId = currentUser.get().getOrganizationId();
+        if (!entitlementService.isEntitled(organizationId, FeatureEntitlement.INVENTORY_MANAGEMENT)) {
+            return new QuotationInvoiceSummaryResponse(0, 0, 0, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO,
+                    BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        LocalDate effectiveFrom = dateFrom != null ? dateFrom : LocalDate.now().withDayOfMonth(1);
+        LocalDate effectiveTo = dateTo != null ? dateTo : LocalDate.now();
+        LocalDate today = LocalDate.now();
+
+        long totalQuotations;
+        long approvedQuotations;
+        long convertedToInvoice;
+        long pendingInvoicesCount;
+        BigDecimal pendingInvoicesAmount;
+        long pendingPaymentsCount;
+        BigDecimal pendingPaymentsAmount;
+        BigDecimal monthlyBilling;
+        BigDecimal outstanding;
+
+        if (ownerScope == null) {
+            totalQuotations = quotationRepository.countByQuotationDateBetween(effectiveFrom, effectiveTo);
+            approvedQuotations = quotationRepository.countByStatusAndQuotationDateBetween(
+                    QuotationStatus.APPROVED, effectiveFrom, effectiveTo);
+            convertedToInvoice = quotationRepository.countByStatusAndQuotationDateBetween(
+                    QuotationStatus.CONVERTED, effectiveFrom, effectiveTo);
+            pendingInvoicesCount = invoiceRepository.countByStatusAndInvoiceDateBetween(
+                    InvoiceStatus.UNPAID, effectiveFrom, effectiveTo);
+            pendingInvoicesAmount = invoiceRepository.sumGrandTotalByStatusBetween(
+                    InvoiceStatus.UNPAID, effectiveFrom, effectiveTo);
+            pendingPaymentsCount = invoiceRepository.countByStatusAndDueDateLessThan(InvoiceStatus.UNPAID, today);
+            pendingPaymentsAmount = invoiceRepository.sumGrandTotalByStatusAndDueDateBefore(InvoiceStatus.UNPAID, today);
+            monthlyBilling = invoiceRepository.sumGrandTotalBetween(effectiveFrom, effectiveTo);
+            outstanding = invoiceRepository.sumGrandTotalByStatus(InvoiceStatus.UNPAID);
+        } else {
+            totalQuotations = quotationRepository.countByOwnerIdInAndQuotationDateBetween(
+                    ownerScope, effectiveFrom, effectiveTo);
+            approvedQuotations = quotationRepository.countByOwnerIdInAndStatusAndQuotationDateBetween(
+                    ownerScope, QuotationStatus.APPROVED, effectiveFrom, effectiveTo);
+            convertedToInvoice = quotationRepository.countByOwnerIdInAndStatusAndQuotationDateBetween(
+                    ownerScope, QuotationStatus.CONVERTED, effectiveFrom, effectiveTo);
+            pendingInvoicesCount = invoiceRepository.countByOwnerIdInAndStatusAndInvoiceDateBetween(
+                    ownerScope, InvoiceStatus.UNPAID, effectiveFrom, effectiveTo);
+            pendingInvoicesAmount = invoiceRepository.sumGrandTotalByStatusForOwnersBetween(
+                    ownerScope, InvoiceStatus.UNPAID, effectiveFrom, effectiveTo);
+            pendingPaymentsCount = invoiceRepository.countByOwnerIdInAndStatusAndDueDateLessThan(
+                    ownerScope, InvoiceStatus.UNPAID, today);
+            pendingPaymentsAmount = invoiceRepository.sumGrandTotalByStatusAndDueDateBeforeForOwners(
+                    ownerScope, InvoiceStatus.UNPAID, today);
+            monthlyBilling = invoiceRepository.sumGrandTotalForOwnersBetween(ownerScope, effectiveFrom, effectiveTo);
+            outstanding = invoiceRepository.sumGrandTotalByStatusForOwners(ownerScope, InvoiceStatus.UNPAID);
+        }
+
+        return new QuotationInvoiceSummaryResponse(totalQuotations, approvedQuotations, convertedToInvoice,
+                pendingInvoicesCount, pendingInvoicesAmount, pendingPaymentsCount, pendingPaymentsAmount,
+                monthlyBilling, outstanding);
+    }
+
+    /**
+     * Reports Dashboard's global-filter-driven block (section 17.5) - every stat card/chart/
+     * table is computed here, in Java, over ONE filtered {@code List<Lead>} fetch
+     * (LeadService#listAllForReports), rather than ~10 separately hand-rolled JPQL group-by
+     * queries each re-implementing the same ~10-filter binding. This is a deliberate departure
+     * from every other method in this class (which all use fixed, narrow JPQL @Query
+     * projections): the filter surface here is far wider (employee/company/state/city/product/
+     * interest-level/business-type/next-follow-up-date/expected-close-date/status), and this
+     * org's data volumes make an in-memory grouping pass over the filtered set perfectly
+     * reasonable - see the plan's own note on this tradeoff. Owner-scoping (EMPLOYEE forced to
+     * own-or-team leads, ADMIN unrestricted) is inherited from listAllForReports itself, not
+     * re-applied here.
+     */
+    @Transactional(readOnly = true)
+    public LeadDashboardResponse leadDashboard(LeadDashboardFilter filter) {
+        List<Lead> leads = leadService.listAllForReports(filter);
+
+        List<MasterData> interestLevelMasters = masterDataRepository.findByType(MasterType.INTEREST_LEVEL, Sort.unsorted());
+        Map<UUID, String> interestCodeById = interestLevelMasters.stream()
+                .collect(Collectors.toMap(MasterData::getId, MasterData::getCode));
+
+        long hot = 0;
+        long warm = 0;
+        long cold = 0;
+        long notSet = 0;
+        long todayFollowUp = 0;
+        long overdueFollowUp = 0;
+        long closedWon = 0;
+        long closedLost = 0;
+        long thisWeekClose = 0;
+        long thisMonthClose = 0;
+        long nextMonthClose = 0;
+        long followUpToday = 0;
+        long followUpTomorrow = 0;
+        long followUpNext7Days = 0;
+        long followUpOverdue = 0;
+        long followUpUnassigned = 0;
+
+        LocalDate today = LocalDate.now();
+        LocalDate endOfWeek = today.plusDays(7 - today.getDayOfWeek().getValue());
+        LocalDate endOfMonth = today.withDayOfMonth(today.lengthOfMonth());
+        LocalDate endOfNextMonth = today.plusMonths(1).withDayOfMonth(today.plusMonths(1).lengthOfMonth());
+
+        Map<String, long[]> byCompany = new LinkedHashMap<>(); // [total, hot, won, lost]
+        Map<String, long[]> byCity = new LinkedHashMap<>(); // [total, hot, won]
+        Map<String, long[]> byProduct = new LinkedHashMap<>(); // [total, won]
+        Map<String, long[]> byInterestBucket = new LinkedHashMap<>(); // [total, won]
+        Map<String, long[]> byBusinessType = new LinkedHashMap<>(); // [total]
+        Map<UUID, long[]> byEmployee = new LinkedHashMap<>(); // [total, hot, followUpPending, won]
+
+        Set<UUID> productIds = leads.stream().flatMap(l -> l.getProductIds().stream()).collect(Collectors.toSet());
+        Set<UUID> cityIds = leads.stream().map(Lead::getCityId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Set<UUID> businessTypeIds = leads.stream().map(Lead::getBusinessTypeId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, String> productLabelById = masterDataRepository.findAllById(productIds).stream()
+                .collect(Collectors.toMap(MasterData::getId, MasterData::getLabel));
+        Map<UUID, String> cityLabelById = masterDataRepository.findAllById(cityIds).stream()
+                .collect(Collectors.toMap(MasterData::getId, MasterData::getLabel));
+        Map<UUID, String> businessTypeLabelById = masterDataRepository.findAllById(businessTypeIds).stream()
+                .collect(Collectors.toMap(MasterData::getId, MasterData::getLabel));
+        Set<UUID> ownerIds = leads.stream().map(Lead::getOwnerId).collect(Collectors.toSet());
+        Map<UUID, String> employeeNameById = employeeRepository.findAllById(ownerIds).stream()
+                .collect(Collectors.toMap(Employee::getId, Employee::getFullName));
+
+        for (Lead lead : leads) {
+            String interestCode = lead.getInterestLevelId() == null ? null : interestCodeById.get(lead.getInterestLevelId());
+            boolean isHot = "HOT".equals(interestCode);
+            boolean isWon = lead.getStatus() == LeadStatus.CLOSED_WON;
+            boolean isLost = lead.getStatus() == LeadStatus.LOST;
+
+            if ("HOT".equals(interestCode)) hot++;
+            else if ("WARM".equals(interestCode)) warm++;
+            else if ("COLD".equals(interestCode)) cold++;
+            else notSet++;
+
+            if (isWon) closedWon++;
+            if (isLost) closedLost++;
+
+            if (lead.getNextFollowupDate() != null) {
+                LocalDate nf = lead.getNextFollowupDate();
+                if (nf.isEqual(today)) { todayFollowUp++; followUpToday++; }
+                else if (nf.isBefore(today)) { overdueFollowUp++; followUpOverdue++; }
+                if (nf.isEqual(today.plusDays(1))) followUpTomorrow++;
+                if (!nf.isBefore(today) && !nf.isAfter(today.plusDays(7))) followUpNext7Days++;
+            } else if (!isWon && !isLost) {
+                followUpUnassigned++;
+            }
+
+            if (lead.getExpectedCloseDate() != null) {
+                LocalDate ec = lead.getExpectedCloseDate();
+                if (!ec.isBefore(today) && !ec.isAfter(endOfWeek)) thisWeekClose++;
+                if (!ec.isBefore(today) && !ec.isAfter(endOfMonth)) thisMonthClose++;
+                if (ec.isAfter(endOfMonth) && !ec.isAfter(endOfNextMonth)) nextMonthClose++;
+            }
+
+            String company = lead.getCompanyName();
+            long[] companyRow = byCompany.computeIfAbsent(company, k -> new long[4]);
+            companyRow[0]++;
+            if (isHot) companyRow[1]++;
+            if (isWon) companyRow[2]++;
+            if (isLost) companyRow[3]++;
+
+            String cityLabel = lead.getCityId() != null ? cityLabelById.getOrDefault(lead.getCityId(), "Other")
+                    : (lead.getCityOther() != null ? lead.getCityOther() : "Not Set");
+            long[] cityRow = byCity.computeIfAbsent(cityLabel, k -> new long[3]);
+            cityRow[0]++;
+            if (isHot) cityRow[1]++;
+            if (isWon) cityRow[2]++;
+
+            for (UUID productId : lead.getProductIds()) {
+                String productLabel = productLabelById.getOrDefault(productId, "Other");
+                long[] productRow = byProduct.computeIfAbsent(productLabel, k -> new long[2]);
+                productRow[0]++;
+                if (isWon) productRow[1]++;
+            }
+
+            String interestBucket = isHot ? "Hot" : "WARM".equals(interestCode) ? "Warm"
+                    : "COLD".equals(interestCode) ? "Cold" : "Not Set";
+            long[] interestRow = byInterestBucket.computeIfAbsent(interestBucket, k -> new long[2]);
+            interestRow[0]++;
+            if (isWon) interestRow[1]++;
+
+            String businessTypeLabel = lead.getBusinessTypeId() != null
+                    ? businessTypeLabelById.getOrDefault(lead.getBusinessTypeId(), "Other")
+                    : (lead.getBusinessTypeOther() != null ? lead.getBusinessTypeOther() : "Not Set");
+            byBusinessType.computeIfAbsent(businessTypeLabel, k -> new long[1])[0]++;
+
+            long[] employeeRow = byEmployee.computeIfAbsent(lead.getOwnerId(), k -> new long[4]);
+            employeeRow[0]++;
+            if (isHot) employeeRow[1]++;
+            if (lead.getNextFollowupDate() != null && !isWon && !isLost) employeeRow[2]++;
+            if (isWon) employeeRow[3]++;
+        }
+
+        long totalLeads = leads.size();
+        double conversionRatePercent = totalLeads == 0 ? 0.0 : roundToTwoDecimals(closedWon * 100.0 / totalLeads);
+
+        List<LeadDashboardResponse.LabelCount> byBusinessTypeList = byBusinessType.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.LabelCount(e.getKey(), e.getValue()[0]))
+                .sorted(Comparator.comparingLong(LeadDashboardResponse.LabelCount::count).reversed())
+                .toList();
+        List<LeadDashboardResponse.LabelCount> byProductList = byProduct.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.LabelCount(e.getKey(), e.getValue()[0]))
+                .sorted(Comparator.comparingLong(LeadDashboardResponse.LabelCount::count).reversed())
+                .toList();
+        List<LeadDashboardResponse.CompanySummaryRow> companyRows = byCompany.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.CompanySummaryRow(e.getKey(), e.getValue()[0], e.getValue()[1],
+                        e.getValue()[2], e.getValue()[3]))
+                .sorted(Comparator.comparingLong(LeadDashboardResponse.CompanySummaryRow::total).reversed())
+                .toList();
+        List<LeadDashboardResponse.CitySummaryRow> cityRows = byCity.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.CitySummaryRow(e.getKey(), e.getValue()[0], e.getValue()[1],
+                        e.getValue()[2]))
+                .sorted(Comparator.comparingLong(LeadDashboardResponse.CitySummaryRow::total).reversed())
+                .toList();
+        List<LeadDashboardResponse.ProductPerformanceRow> productRows = byProduct.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.ProductPerformanceRow(e.getKey(), e.getValue()[0], e.getValue()[1],
+                        e.getValue()[0] == 0 ? 0.0 : roundToTwoDecimals(e.getValue()[1] * 100.0 / e.getValue()[0])))
+                .sorted(Comparator.comparingLong(LeadDashboardResponse.ProductPerformanceRow::total).reversed())
+                .toList();
+        List<LeadDashboardResponse.InterestLevelPerformanceRow> interestRows = byInterestBucket.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.InterestLevelPerformanceRow(e.getKey(), e.getValue()[0],
+                        e.getValue()[1],
+                        e.getValue()[0] == 0 ? 0.0 : roundToTwoDecimals(e.getValue()[1] * 100.0 / e.getValue()[0])))
+                .toList();
+        List<LeadDashboardResponse.EmployeePerformanceRow> employeeRows = byEmployee.entrySet().stream()
+                .map(e -> new LeadDashboardResponse.EmployeePerformanceRow(
+                        employeeNameById.getOrDefault(e.getKey(), "Unknown"), e.getValue()[0], e.getValue()[1],
+                        e.getValue()[2], e.getValue()[3],
+                        e.getValue()[0] == 0 ? 0.0 : roundToTwoDecimals(e.getValue()[3] * 100.0 / e.getValue()[0])))
+                .sorted(Comparator.comparingLong(LeadDashboardResponse.EmployeePerformanceRow::total).reversed())
+                .toList();
+
+        return new LeadDashboardResponse(
+                totalLeads, hot, warm, cold, notSet,
+                todayFollowUp, overdueFollowUp,
+                closedWon, closedLost, conversionRatePercent,
+                new LeadDashboardResponse.ExpectedClosures(thisWeekClose, thisMonthClose, nextMonthClose),
+                byBusinessTypeList, byProductList,
+                companyRows, cityRows, productRows, interestRows, employeeRows,
+                new LeadDashboardResponse.FollowUpSummary(followUpToday, followUpTomorrow, followUpNext7Days,
+                        followUpOverdue, followUpUnassigned));
     }
 
     /**

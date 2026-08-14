@@ -49,6 +49,6 @@ public class InvoiceNumberService {
                 .setParameter("year", year)
                 .executeUpdate();
 
-        return String.format("QUO-%d-%04d", year, nextNumber.intValue());
+        return String.format("INV-%d-%04d", year, nextNumber.intValue());
     }
 }

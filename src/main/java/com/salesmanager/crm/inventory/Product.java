@@ -58,6 +58,9 @@ public class Product extends TenantAware {
     @Column(name = "unit_of_measure", length = 50)
     private String unitOfMeasure;
 
+    @Column(name = "hsn_sac_code", length = 20)
+    private String hsnSacCode;
+
     @Column(name = "stock_quantity", nullable = false)
     @Builder.Default
     private int stockQuantity = 0;
